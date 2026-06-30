@@ -42,6 +42,7 @@ from report_writer import write_calculation_report
 
 
 APP_TITLE = "光伏跟踪支架地脚螺栓计算程序"
+APP_VERSION = "1.0.0"
 APP_ICON = Path("assets") / "anchor_plate.ico"
 BG = "#F4F7FA"
 PANEL = "#FFFFFF"
@@ -213,7 +214,7 @@ class ScrollableFrame(ttk.Frame):
 class AnchorBoltApp(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
-        self.title(APP_TITLE)
+        self.title(f"{APP_TITLE} v{APP_VERSION}")
         self._apply_window_icon()
         self.geometry("1280x820")
         self.minsize(1120, 720)
@@ -272,7 +273,7 @@ class AnchorBoltApp(tk.Tk):
 
         title_row = ttk.Frame(root)
         title_row.pack(fill=X, pady=(0, 12))
-        title = ttk.Label(title_row, text=APP_TITLE, font=("Microsoft YaHei UI", 16, "bold"), foreground=ACCENT)
+        title = ttk.Label(title_row, text=f"{APP_TITLE} v{APP_VERSION}", font=("Microsoft YaHei UI", 16, "bold"), foreground=ACCENT)
         title.pack(side=LEFT)
         subtitle = ttk.Label(title_row, text="ACI 318-19 Chapter 17 | 独立计算 | Word 计算书", style="Muted.TLabel")
         subtitle.pack(side=LEFT, padx=(18, 0))

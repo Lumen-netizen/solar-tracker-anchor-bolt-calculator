@@ -2,6 +2,8 @@
 
 Windows desktop calculator for a four-anchor photovoltaic tracker support base plate, based on the ACI 318-19 Chapter 17 workflow in the reference spreadsheet.
 
+Current release: `v1.0.0`
+
 ## Scope
 
 - Standalone calculation engine; Excel is not required at runtime.
@@ -32,3 +34,4 @@ The final deliverable is intended to be a single-file Windows exe built with PyI
 ```
 
 The packaged file is written to `dist\光伏跟踪支架地脚螺栓计算程序.exe`.
+The release asset copy is written to `dist\光伏跟踪支架地脚螺栓计算程序_v1.0.0.exe`.

@@ -3,6 +3,8 @@ $ErrorActionPreference = "Stop"
 $AppDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $Python = Join-Path $AppDir ".venv\Scripts\python.exe"
 $AppName = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String("5YWJ5LyP6Lef6Liq5pSv5p625Zyw6ISa6J665qCT6K6h566X56iL5bqP"))
+$AppVersion = "1.0.0"
+$ReleaseExeName = "$($AppName)_v$AppVersion.exe"
 
 if (!(Test-Path $Python)) {
     throw "Local virtual environment was not found. Create .venv and install PyInstaller, python-docx, and Pillow first."
@@ -16,6 +18,7 @@ try {
         --windowed `
         --name $AppName `
         --icon "assets\anchor_plate.ico" `
+        --version-file "version_info.txt" `
         --add-data "assets;assets" `
         --add-data "tkinter;tkinter" `
         --add-data "runtime_tcl;runtime_tcl" `
@@ -27,6 +30,13 @@ try {
         --hidden-import "_tkinter" `
         --hidden-import "PIL._tkinter_finder" `
         app.py
+
+    $BuiltExe = Join-Path $AppDir "dist\$AppName.exe"
+    $ReleaseExe = Join-Path $AppDir "dist\$ReleaseExeName"
+    if (Test-Path $BuiltExe) {
+        Copy-Item -LiteralPath $BuiltExe -Destination $ReleaseExe -Force
+        Write-Host "Release executable copied to $ReleaseExe"
+    }
 }
 finally {
     Pop-Location
