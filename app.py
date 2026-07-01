@@ -42,7 +42,7 @@ from report_writer import write_calculation_report
 
 
 APP_TITLE = "光伏跟踪支架地脚螺栓计算程序"
-APP_VERSION = "1.0.0"
+APP_VERSION = "1.0.1"
 APP_ICON = Path("assets") / "anchor_plate.ico"
 BG = "#F4F7FA"
 PANEL = "#FFFFFF"
@@ -481,11 +481,50 @@ class AnchorBoltApp(tk.Tk):
         self.tree.bind("<<TreeviewSelect>>", self._show_selected_detail)
 
         ttk.Label(result_detail_frame, text="验算详情 / Check Detail", style="Panel.TLabel", font=("Microsoft YaHei UI", 10, "bold")).pack(fill=X)
-        detail = ttk.Label(result_detail_frame, textvariable=self.detail_var, style="Panel.TLabel", wraplength=720, justify="left")
-        detail.pack(fill=X, pady=(6, 0))
-        self.detail_canvas = tk.Canvas(result_detail_frame, height=190, bg="#F8FAFC", highlightthickness=1, highlightbackground="#CBD5E1")
-        self.detail_canvas.pack(fill=BOTH, expand=True, pady=(8, 0))
+        self.detail_paned = tk.PanedWindow(
+            result_detail_frame,
+            orient=tk.HORIZONTAL,
+            sashrelief=tk.RAISED,
+            sashwidth=7,
+            bg="#CBD5E1",
+            bd=0,
+            showhandle=True,
+        )
+        self.detail_paned.pack(fill=BOTH, expand=True, pady=(6, 0))
+
+        self.detail_text_frame = ttk.Frame(self.detail_paned, style="Panel.TFrame")
+        self.detail_diagram_frame = ttk.Frame(self.detail_paned, style="Panel.TFrame")
+        self.detail_paned.add(self.detail_text_frame, minsize=360)
+        self.detail_paned.add(self.detail_diagram_frame, minsize=460)
+
+        ttk.Label(self.detail_text_frame, text="公式与代入 / Formula and Substitution", style="Panel.TLabel", font=("Microsoft YaHei UI", 9, "bold")).pack(fill=X)
+        detail_text_wrap = ttk.Frame(self.detail_text_frame, style="Panel.TFrame")
+        detail_text_wrap.pack(fill=BOTH, expand=True, pady=(6, 0))
+        self.detail_text = tk.Text(
+            detail_text_wrap,
+            wrap="word",
+            height=8,
+            bg=PANEL,
+            fg=TEXT,
+            relief=tk.FLAT,
+            borderwidth=0,
+            highlightthickness=1,
+            highlightbackground="#CBD5E1",
+            padx=6,
+            pady=6,
+            font=("Microsoft YaHei UI", 9),
+        )
+        detail_text_scroll = ttk.Scrollbar(detail_text_wrap, orient=VERTICAL, command=self.detail_text.yview)
+        self.detail_text.configure(yscrollcommand=detail_text_scroll.set, state="disabled")
+        self.detail_text.pack(side=LEFT, fill=BOTH, expand=True)
+        detail_text_scroll.pack(side=RIGHT, fill=Y)
+
+        ttk.Label(self.detail_diagram_frame, text="图示 / Schematic", style="Panel.TLabel", font=("Microsoft YaHei UI", 9, "bold")).pack(fill=X)
+        self.detail_canvas = tk.Canvas(self.detail_diagram_frame, height=190, bg="#F8FAFC", highlightthickness=1, highlightbackground="#CBD5E1")
+        self.detail_canvas.pack(fill=BOTH, expand=True, pady=(6, 0))
         self.detail_canvas.bind("<Configure>", self._redraw_detail_canvas)
+        self.detail_var.trace_add("write", self._sync_detail_text)
+        self._sync_detail_text()
 
         self.canvas = tk.Canvas(diagram_tab, bg="#FFFFFF", highlightthickness=1, highlightbackground="#CBD5E1")
         self.canvas.pack(fill=BOTH, expand=True)
@@ -780,15 +819,28 @@ class AnchorBoltApp(tk.Tk):
             return "info"
         return "ok"
 
+    def _sync_detail_text(self, *_args) -> None:
+        detail_text = getattr(self, "detail_text", None)
+        if detail_text is None:
+            return
+        detail_text.configure(state="normal")
+        detail_text.delete("1.0", END)
+        detail_text.insert("1.0", self.detail_var.get())
+        detail_text.configure(state="disabled")
+
     def _set_detail_canvas_visible(self, visible: bool) -> None:
         canvas = getattr(self, "detail_canvas", None)
-        if canvas is None:
+        paned = getattr(self, "detail_paned", None)
+        diagram_frame = getattr(self, "detail_diagram_frame", None)
+        if canvas is None or paned is None or diagram_frame is None:
             return
+        panes = {str(pane) for pane in paned.panes()}
+        diagram_id = str(diagram_frame)
         if visible:
-            if not canvas.winfo_ismapped():
-                canvas.pack(fill=BOTH, expand=True, pady=(8, 0))
-        elif canvas.winfo_ismapped():
-            canvas.pack_forget()
+            if diagram_id not in panes:
+                paned.add(diagram_frame, minsize=460)
+        elif diagram_id in panes:
+            paned.forget(diagram_frame)
 
     def _draw_detail_diagram(self, check_name: str | None) -> None:
         canvas = getattr(self, "detail_canvas", None)
