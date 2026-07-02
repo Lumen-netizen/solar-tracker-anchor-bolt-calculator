@@ -42,7 +42,7 @@ from report_writer import write_calculation_report
 
 
 APP_TITLE = "光伏跟踪支架地脚螺栓计算程序"
-APP_VERSION = "1.0.1"
+APP_VERSION = "1.0.2"
 APP_ICON = Path("assets") / "anchor_plate.ico"
 BG = "#F4F7FA"
 PANEL = "#FFFFFF"
@@ -95,9 +95,9 @@ TOOLTIP_PURPOSES = {
     "fy_shear_rebar": "用于简化估算抗剪锚固配筋面积的设计强度；程序按 As,V = Vua,g / fy,V 计算，不再额外乘 φ。该值可按中国规范或项目要求确定。",
     "tension_rebar_factor": "用于把程序计算的抗拉所需配筋面积换算为实配参与面积：As,N,prov = k_As,N × As,N,req。",
     "shear_rebar_factor": "用于把程序计算的抗剪所需配筋面积换算为实配参与面积：As,V,prov = k_As,V × As,V,req。",
-    "n": "轴力设计值；正值表示对底板向下的压力。",
-    "m": "弯矩设计值；正方向见图示中的 M。",
-    "v": "剪力设计值；正方向见图示中的 V。",
+    "n": "轴力设计值；只能输入正值，正值表示对底板向下的压力。",
+    "m": "弯矩设计值；可输入正值或负值，正负号用于判断受拉侧锚栓排，计算偏心距大小时采用 |M|/N。",
+    "v": "剪力设计值；只能输入正值，正方向见图示中的 V。",
     "mu": "底板与混凝土界面的摩擦系数，用于 Vfb = μ(Ta + N)。",
     "phi_tension_steel": "钢材抗拉强度折减系数。",
     "psi_ec_n": "抗拉混凝土锥体破坏偏心修正系数。",
@@ -121,7 +121,7 @@ RESULT_GROUPS = (
     ("geometry", "构造与几何要求 / Geometry Requirements", "锚栓间距等构造和几何限制。eh 为拔出公式适用条件，已在输入框提示中说明。"),
     ("tension", "抗拉验算 / Tension Checks", "钢材抗拉、混凝土抗拉锥体破坏、拔出破坏等抗拉承载力验算。"),
     ("shear", "抗剪验算 / Shear Checks", "先判断界面摩擦是否已经足够抵抗剪力；只有扣除摩擦后 Vua > 0 时才进行锚栓抗剪承载力验算。"),
-    ("interaction", "拉剪相互作用 / Tension-Shear Interaction", "仅当同一锚栓或同一锚栓组同时承受拉力和扣除界面摩擦后的锚栓剪力时，才按 ACI 318-19 17.8 验算；若不需锚栓抗剪，或 Case 1 中抗拉与抗剪由不同侧锚栓承担，则本项不适用。"),
+    ("interaction", "拉剪相互作用 / Tension-Shear Interaction", "仅当同一锚栓或同一锚栓组同时承受拉力和扣除界面摩擦后的锚栓剪力时，才按 ACI 318-19 17.8 验算；若不需锚栓抗剪，或抗拉与抗剪由不同排锚栓承担，则本项不适用。"),
 )
 
 
@@ -668,10 +668,10 @@ class AnchorBoltApp(tk.Tk):
     def _refresh_force_table(self, results: AnchorResults) -> None:
         self.force_tree.delete(*self.force_tree.get_children())
         rows = (
-            ("柱脚受力工况 / Force case", f"{results.values['force_case']} - {results.values['force_case_label']}"),
+            ("混凝土受压应力分布类型 / Concrete compression stress distribution type", f"{results.values['force_case']} - {results.values['force_case_label']}"),
             ("偏心距 / Eccentricity e", f"{results.values['eccentricity']:.1f} mm"),
+            ("受拉侧锚栓排 / Tension anchor row", str(results.values["tension_anchor_row_label"])),
             ("受拉侧锚栓至底板边距离 / l1", f"{results.values['l1']:.1f} mm"),
-            ("弹性模量比 / Modular ratio n = Es/Ec", f"{results.values['modular_ratio']:.3f}"),
             ("混凝土受压高度 / Compression depth x", f"{results.values['compression_x']:.1f} mm"),
             ("受拉侧锚栓总拉力 / Total tension Ta", f"{results.values['total_anchor_tension']:.3f} kN"),
             ("界面摩擦力 / Interface friction Vfb", f"{results.values['friction_force']:.3f} kN"),
@@ -891,7 +891,7 @@ class AnchorBoltApp(tk.Tk):
         elif check_name == "Concrete pryout strength in shear":
             self._draw_anchor_section(canvas, 72, 50, 240, 120, mode="pryout")
         elif check_name == "Tension-shear interaction":
-            self._draw_interaction_code_panel(canvas, 42, 52, w - 84, h - 72)
+            self._draw_interaction_plot_panel(canvas, 42, 42, w - 84, h - 58)
             return
         else:
             canvas.create_text(
@@ -903,10 +903,11 @@ class AnchorBoltApp(tk.Tk):
                 font=("Microsoft YaHei UI", 10),
             )
 
-    def _draw_interaction_code_panel(self, canvas: tk.Canvas, x: float, y: float, bw: float, bh: float) -> None:
+    def _draw_interaction_plot_panel(self, canvas: tk.Canvas, x: float, y: float, bw: float, bh: float) -> None:
         black = "#111827"
         muted = "#475569"
         blue = "#1D4ED8"
+        red = "#DC2626"
         panel = "#FFFFFF"
         rule = "#CBD5E1"
         light = "#EFF6FF"
@@ -914,58 +915,77 @@ class AnchorBoltApp(tk.Tk):
         eta_v = self.last_results.governing_shear_ratio if self.last_results else 0.0
         interaction_sum = self.last_results.values.get("interaction_sum") if self.last_results else None
         same_anchor_group = bool(self.last_results.values.get("interaction_same_anchor_group", True)) if self.last_results else True
+        shear_demand = self.last_results.values.get("vua", 0.0) if self.last_results else 0.0
+        show_current_point = shear_demand > 1.0e-9 and same_anchor_group and interaction_sum is not None
+        current_color = OK if show_current_point and interaction_sum <= 1.2 else red
 
         canvas.create_rectangle(x, y, x + bw, y + bh, fill=panel, outline=rule, width=1)
         canvas.create_rectangle(x, y, x + bw, y + 30, fill=light, outline=rule, width=1)
-        canvas.create_text(x + 14, y + 15, text="ACI 318-19 17.8 - Tension and shear interaction", anchor="w", fill=black, font=("Arial", 11, "bold"))
+        canvas.create_text(x + 14, y + 15, text="ACI 318-19 Fig. R17.8 - Tension and shear interaction", anchor="w", fill=black, font=("Arial", 11, "bold"))
 
-        left = x + 18
-        col2 = x + bw * 0.54
-        row_y = y + 48
-        canvas.create_text(left, row_y, text="17.8.1  Scope", anchor="w", fill=blue, font=("Arial", 10, "bold"))
-        canvas.create_text(
-            left + 96,
-            row_y,
-            text="Anchors resisting both tension and shear shall satisfy 17.8.2 and 17.8.3.",
-            anchor="w",
-            fill=black,
-            font=("Arial", 10),
-        )
+        plot_x = x + 64
+        plot_y = y + 78
+        plot_w = max(240, min(bw * 0.58, bh * 1.08))
+        available_plot_h = max(140, bh - 128)
+        plot_h = max(140, min(available_plot_h, plot_w * 0.68))
+        axis_max = max(1.2, eta_n * 1.12, eta_v * 1.12)
+        axis_max = min(max(axis_max, 1.2), 2.4)
+        axis_x0 = plot_x
+        axis_y0 = plot_y + plot_h
 
-        row_y += 30
-        canvas.create_line(left, row_y - 10, x + bw - 18, row_y - 10, fill=rule)
-        canvas.create_text(left, row_y, text="17.8.2  Neglect criteria", anchor="w", fill=blue, font=("Arial", 10, "bold"))
-        canvas.create_text(left + 20, row_y + 24, text="(a)  Nua / (φNn) ≤ 0.2", anchor="w", fill=black, font=("Arial", 11))
-        canvas.create_text(left + 20, row_y + 48, text="(b)  Vua / (φVn) ≤ 0.2", anchor="w", fill=black, font=("Arial", 11))
-        canvas.create_text(
-            col2,
-            row_y + 24,
-            text=f"Current: eta_N = {eta_n:.3f}",
-            anchor="w",
-            fill=muted,
-            font=("Arial", 10),
-        )
-        canvas.create_text(
-            col2,
-            row_y + 48,
-            text=f"Current: eta_V = {eta_v:.3f}",
-            anchor="w",
-            fill=muted,
-            font=("Arial", 10),
-        )
+        def px(value: float) -> float:
+            return plot_x + max(0.0, min(value, axis_max)) / axis_max * plot_w
 
-        row_y += 88
-        canvas.create_line(left, row_y - 10, x + bw - 18, row_y - 10, fill=rule)
-        canvas.create_text(left, row_y, text="17.8.3  General interaction equation", anchor="w", fill=blue, font=("Arial", 10, "bold"))
-        canvas.create_text(left + 20, row_y + 30, text="Nua / (φNn) + Vua / (φVn) ≤ 1.2", anchor="w", fill=black, font=("Arial", 12, "bold"))
-        if interaction_sum is None:
-            if not same_anchor_group:
-                result_text = "Current case: shear-resisting anchors and tension anchors are different rows; interaction is not applicable."
-            else:
-                result_text = "Interaction is not required when one force component is not present or may be neglected by 17.8.2."
+        def py(value: float) -> float:
+            return plot_y + plot_h - max(0.0, min(value, axis_max)) / axis_max * plot_h
+
+        canvas.create_line(axis_x0, axis_y0, axis_x0 + plot_w + 18, axis_y0, fill=black, width=2, arrow=tk.LAST)
+        canvas.create_line(axis_x0, axis_y0, axis_x0, plot_y - 18, fill=black, width=2, arrow=tk.LAST)
+        canvas.create_text(axis_x0 + plot_w + 28, axis_y0 + 2, text="Vua/(φVn)", anchor="w", fill=black, font=("Arial", 10))
+        canvas.create_text(axis_x0 + 8, plot_y - 14, text="Nua/(φNn)", anchor="w", fill=black, font=("Arial", 10))
+
+        for value, label in [(0.2, "0.2"), (1.0, "1.0")]:
+            canvas.create_line(px(value), axis_y0 - 4, px(value), axis_y0 + 4, fill=black, width=1)
+            canvas.create_text(px(value), axis_y0 + 18, text=label, anchor="n", fill=black, font=("Arial", 9))
+            canvas.create_line(axis_x0 - 4, py(value), axis_x0 + 4, py(value), fill=black, width=1)
+            canvas.create_text(axis_x0 - 10, py(value), text=label, anchor="e", fill=black, font=("Arial", 9))
+
+        envelope = [(0.0, 1.0), (0.2, 1.0), (1.0, 0.2), (1.0, 0.0)]
+        envelope_points = [(px(v), py(n)) for v, n in envelope]
+        for p1, p2 in zip(envelope_points, envelope_points[1:]):
+            canvas.create_line(*p1, *p2, fill=blue, width=4)
+        canvas.create_text(px(0.64), py(0.70) - 20, text="eta_N + eta_V = 1.2", anchor="center", fill=blue, font=("Arial", 10, "bold"))
+
+        if show_current_point:
+            dot_x = px(eta_v)
+            dot_y = py(eta_n)
+            canvas.create_oval(dot_x - 5, dot_y - 5, dot_x + 5, dot_y + 5, fill=current_color, outline=current_color)
+            canvas.create_text(dot_x + 10, dot_y - 10, text="Current", anchor="w", fill=current_color, font=("Arial", 9, "bold"))
+
+        text_x = plot_x + plot_w + 38
+        right_margin = x + bw - 46
+        text_w = max(200, right_margin - text_x)
+        canvas.create_text(text_x, plot_y + 4, text="Solid line: ACI 318-19 R17.8 trilinear interaction approach.", anchor="nw", fill=black, font=("Arial", 10), width=text_w)
+        info_y = plot_y + 44
+        box_y = plot_y + 92
+        if show_current_point:
+            canvas.create_text(text_x, info_y, text=f"Current point: eta_V = {eta_v:.3f}, eta_N = {eta_n:.3f}", anchor="nw", fill=current_color, font=("Arial", 10, "bold"), width=text_w)
         else:
-            result_text = f"Current: eta_N + eta_V = {interaction_sum:.3f} ≤ 1.2"
-        canvas.create_text(col2, row_y + 30, text=result_text, anchor="w", fill=muted, font=("Arial", 10), width=max(220, bw * 0.42))
+            box_y = plot_y + 68
+
+        if shear_demand <= 1.0e-9:
+            result_text = "Interaction is not applicable because anchor shear demand after friction is zero."
+        elif not same_anchor_group:
+            result_text = "Interaction is not applicable because tension and shear are resisted by different anchor rows."
+        elif eta_n <= 0.2 or eta_v <= 0.2:
+            result_text = "ACI 318-19 17.8.2 permits neglecting interaction when eta_N <= 0.2 or eta_V <= 0.2."
+        elif interaction_sum is None:
+            result_text = "Interaction check is not required for the current state."
+        else:
+            op = "<=" if interaction_sum <= 1.2 else ">"
+            result_text = f"ACI 318-19 17.8.3: eta_N + eta_V = {interaction_sum:.3f} {op} 1.2."
+        canvas.create_rectangle(text_x, box_y, right_margin, min(y + bh - 18, box_y + 76), fill="#F8FAFC", outline=rule)
+        canvas.create_text(text_x + 12, box_y + 14, text=result_text, anchor="nw", fill=muted, font=("Arial", 10), width=max(160, text_w - 20))
 
     def _draw_arrow_small(self, canvas: tk.Canvas, x1: float, y1: float, x2: float, y2: float, color: str, width: int = 3) -> None:
         canvas.create_line(x1, y1, x2, y2, fill=color, width=width, arrow=tk.LAST, arrowshape=(11, 13, 5))
@@ -1375,7 +1395,7 @@ class AnchorBoltApp(tk.Tk):
         self._draw_arrow(canvas, arrow_x, selected_y - 58, arrow_x, selected_y + 58, blue)
         canvas.create_text(arrow_x + 22, selected_y + 4, text="V", fill=blue, font=("Arial", 11, "bold"), anchor="w")
         moment_r = max(28, min(50, plate_w * 0.16, plate_h * 0.16))
-        self._draw_moment(canvas, cx - moment_r * 0.6, cy + moment_r * 0.15, moment_r, blue)
+        self._draw_moment(canvas, cx - moment_r * 0.6, cy + moment_r * 0.15, moment_r, blue, positive=inputs.m >= 0.0)
         canvas.create_text(px, py + p_h + 96, text=selected_label, anchor="w", fill=blue, font=("Arial", 9, "bold"))
         if released_y is not None:
             canvas.create_text(
@@ -1564,10 +1584,11 @@ class AnchorBoltApp(tk.Tk):
             canvas.create_line(x2, y2 - 7, x2, y2 + 7, fill=TEXT)
             canvas.create_text((x1 + x2) / 2, y1 + 14, text=label, fill=TEXT, font=("Arial", 9))
 
-    def _draw_moment(self, canvas: tk.Canvas, x: float, y: float, r: float, color: str) -> None:
+    def _draw_moment(self, canvas: tk.Canvas, x: float, y: float, r: float, color: str, positive: bool = True) -> None:
         points: list[float] = []
         for step in range(24):
-            angle = math.radians(270 - 180 * step / 23)
+            ratio = step / 23
+            angle = math.radians(270 - 180 * ratio if positive else 90 + 180 * ratio)
             points.extend((x + r * math.cos(angle), y + r * math.sin(angle)))
         canvas.create_line(
             *points,

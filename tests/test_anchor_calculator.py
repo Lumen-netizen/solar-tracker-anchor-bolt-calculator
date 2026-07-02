@@ -125,16 +125,39 @@ class AnchorCalculatorTests(unittest.TestCase):
         self.assertEqual(result.interaction_5_3.section, "ACI 318-19 17.8.3")
         self.assertAlmostEqual(result.interaction_5_3.ratio, result.values["interaction_sum"] / 1.2, places=9)
         self.assertEqual(result.interaction_5_3.status, "NG")
+        self.assertIn("> 1.2", result.interaction_5_3.substitution)
 
     def test_case1_shear_and_tension_on_different_rows_skips_interaction(self) -> None:
         result = calculate_anchor(AnchorInputs(v=120.0, shear_case=1))
         self.assertGreater(result.values["vua"], 0.0)
+        self.assertEqual(result.values["tension_anchor_row"], "top")
+        self.assertEqual(result.values["shear_resisting_row"], "bottom")
         self.assertFalse(result.values["interaction_same_anchor_group"])
         self.assertFalse(result.values["interaction_applicable"])
         self.assertIsNone(result.values["interaction_sum"])
         self.assertEqual(result.interaction_5_3.section, "ACI 318-19 17.8.1")
         self.assertEqual(result.interaction_5_3.status, "Not Applicable")
         self.assertIn("different anchor rows", result.interaction_5_3.note)
+
+    def test_negative_moment_reverses_tension_row_and_case1_interaction(self) -> None:
+        positive_case2 = calculate_anchor(AnchorInputs(m=25.0, v=120.0, shear_case=2))
+        negative_case1 = calculate_anchor(AnchorInputs(m=-25.0, v=120.0, shear_case=1))
+
+        self.assertAlmostEqual(negative_case1.values["eccentricity"], -positive_case2.values["eccentricity"], places=9)
+        self.assertAlmostEqual(negative_case1.values["eccentricity_abs"], positive_case2.values["eccentricity_abs"], places=9)
+        self.assertAlmostEqual(negative_case1.values["total_anchor_tension"], positive_case2.values["total_anchor_tension"], places=9)
+        self.assertEqual(negative_case1.values["tension_anchor_row"], "bottom")
+        self.assertEqual(negative_case1.values["shear_resisting_row"], "bottom")
+        self.assertTrue(negative_case1.values["interaction_same_anchor_group"])
+        self.assertTrue(negative_case1.values["interaction_applicable"])
+        self.assertEqual(negative_case1.interaction_5_3.section, "ACI 318-19 17.8.3")
+        self.assertAlmostEqual(negative_case1.values["interaction_sum"], positive_case2.values["interaction_sum"], places=9)
+
+        negative_case2 = calculate_anchor(AnchorInputs(m=-25.0, v=120.0, shear_case=2))
+        self.assertEqual(negative_case2.values["tension_anchor_row"], "bottom")
+        self.assertEqual(negative_case2.values["shear_resisting_row"], "top")
+        self.assertFalse(negative_case2.values["interaction_same_anchor_group"])
+        self.assertEqual(negative_case2.interaction_5_3.status, "Not Applicable")
 
     def test_rebar_amplification_reduces_only_rebar_substituted_interaction_terms(self) -> None:
         baseline = calculate_anchor(AnchorInputs(v=100.0, shear_case=1))

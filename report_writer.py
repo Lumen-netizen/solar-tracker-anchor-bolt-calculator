@@ -204,8 +204,8 @@ def _add_layout_and_load_convention(doc: Document, results: AnchorResults) -> No
 
     rows = [
         ("Axial force N", "Positive N is taken as downward compression on the base plate."),
-        ("Moment M", "Positive M produces tension in the anchor row shown in the plan diagram."),
-        ("Shear V", "Positive V follows the blue arrow direction shown in the plan diagram."),
+        ("Moment M", "M may be positive or negative. The sign controls the tension anchor row; the force magnitude uses |M|/N."),
+        ("Shear V", "V is entered as a positive value following the blue arrow direction shown in the plan diagram."),
         ("Shear case", SHEAR_CASE_LABELS[results.inputs.shear_case]),
     ]
     table = _add_table(doc, ["Load item", "Convention"], rows, widths=(1.8, 5.6))
@@ -259,12 +259,14 @@ def _add_demand_section(doc: Document, results: AnchorResults) -> None:
         ("Edge distance ca1", "ca1 = (L - s1) / 2", f"({inputs.pedestal_l:g} - {inputs.s1:g}) / 2", f"{v['ca1']:.3f} mm"),
         ("Edge distance ca2", "ca2 = (B - s2) / 2", f"({inputs.pedestal_b:g} - {inputs.s2:g}) / 2", f"{v['ca2']:.3f} mm"),
         ("Distance from tension edge to anchor row", "l1 = (l - s1) / 2", f"({inputs.plate_l:g} - {inputs.s1:g}) / 2", f"{v['l1']:.3f} mm"),
-        ("Load eccentricity", "e = M / N", f"{inputs.m:g} / {inputs.n:g} x 1000", f"{v['eccentricity']:.3f} mm"),
+        ("Signed load eccentricity", "e = M / N", f"{inputs.m:g} / {inputs.n:g} x 1000", f"{v['eccentricity']:.3f} mm"),
+        ("Eccentricity magnitude", "|e| = |M| / N", f"|{inputs.m:g}| / {inputs.n:g} x 1000", f"{v['eccentricity_abs']:.3f} mm"),
+        ("Tension anchor row", "Moment sign", "Top row for M >= 0; bottom row for M < 0", str(v["tension_anchor_row_label"])),
         ("Elastic modular ratio", "n = Es / Ec", n_eq, f"{v['modular_ratio']:.3f}"),
         ("Total effective area of tension anchors", "A*e = 2 Ase", f"2 x {inputs.ase:g}", f"{v['ae_star']:.3f} mm2"),
         ("Case a limit", "l / 6", f"{inputs.plate_l:g} / 6", f"{v['case_a_limit']:.3f} mm"),
         ("Case b limit", "l / 6 + l1 / 3", f"{v['case_a_limit']:.3f} + {v['l1']:.3f} / 3", f"{v['case_b_limit']:.3f} mm"),
-        ("Selected force case", "Table 8-3 criterion", f"e = {v['eccentricity']:.3f} mm", f"{v['force_case']} - {v['force_case_label']}"),
+        ("Concrete compression stress distribution type", "Table 8-3 criterion", f"|e| = {v['eccentricity_abs']:.3f} mm", f"{v['force_case']} - {v['force_case_label']}"),
         ("Compression block depth", "xn by selected case", _force_depth_substitution(results), f"{v['compression_x']:.3f} mm"),
         ("Maximum concrete compression stress", v["bearing_formula"], v["bearing_substitution"], f"{v['sigma_max']:.3f} MPa"),
         ("Total tension force in tension-side anchors", "Ta by selected case", _force_tension_substitution(results), f"{v['total_anchor_tension']:.3f} kN"),
@@ -347,7 +349,8 @@ def _add_interaction_section(doc: Document, results: AnchorResults) -> None:
         interaction_sum = v.get("interaction_sum") or 0.0
         interaction_limit = v.get("interaction_limit", 1.2)
         status = "OK" if interaction_sum <= interaction_limit else "NG"
-        current_result = f"eta_N + eta_V = {interaction_sum:.3f} <= {interaction_limit:.1f}; status = {status}."
+        op = "<=" if interaction_sum <= interaction_limit else ">"
+        current_result = f"eta_N + eta_V = {interaction_sum:.3f} {op} {interaction_limit:.1f}; status = {status}."
     rows = [
         ("ACI 318-19 17.8.1", "Anchors or anchor groups resisting both tension and shear shall satisfy 17.8.2 and 17.8.3."),
         ("ACI 318-19 17.8.2(a)", "The interaction between tension and shear may be neglected if Nua/(phi Nn) <= 0.2."),
@@ -359,6 +362,10 @@ def _add_interaction_section(doc: Document, results: AnchorResults) -> None:
     ]
     table = _add_table(doc, ["Reference / item", "Requirement or result"], rows, widths=(2.0, 5.4))
     _shade_header(table)
+    p = doc.add_paragraph()
+    p.add_run("Interaction schematic. ").bold = True
+    p.add_run("The current point is shown only when the interaction equation is applicable; green indicates OK and red indicates NG.")
+    doc.add_picture(str(_make_interaction_diagram(results)), width=Inches(6.5))
 
 
 def _add_schematic_section(doc: Document, results: AnchorResults) -> None:
@@ -397,6 +404,9 @@ def _add_appendix(doc: Document, results: AnchorResults) -> None:
     doc.add_heading("Appendix A. Formula Trace", level=1)
     rows = []
     for key, label, unit in (
+        ("eccentricity", "Signed eccentricity e", "mm"),
+        ("eccentricity_abs", "Eccentricity magnitude |e|", "mm"),
+        ("tension_anchor_row_label", "Tension anchor row", "-"),
         ("l1", "Distance from tension edge to anchor row l1", "mm"),
         ("ae_star", "Total effective area of tension anchors A*e", "mm2"),
         ("modular_ratio", "Elastic modular ratio n", "-"),
@@ -499,10 +509,10 @@ def _force_depth_substitution(results: AnchorResults) -> str:
     if v["force_case"] == "a":
         return f"x = l = {i.plate_l:g}"
     if v["force_case"] == "b":
-        return f"x = 3(l/2 - e) = 3({i.plate_l:g}/2 - {v['eccentricity']:.3f})"
+        return f"x = 3(l/2 - |e|) = 3({i.plate_l:g}/2 - {v['eccentricity_abs']:.3f})"
     return (
         "xn solved from Eq. 8-158: "
-        "xn^3 + 3(e - l/2)xn^2 - (6nA*e/b)(e + l/2 - l1)(l - l1 - xn) = 0"
+        "xn^3 + 3(|e| - l/2)xn^2 - (6nA*e/b)(|e| + l/2 - l1)(l - l1 - xn) = 0"
     )
 
 
@@ -512,7 +522,7 @@ def _force_tension_substitution(results: AnchorResults) -> str:
     if v["force_case"] in {"a", "b"}:
         return "Ta = 0 for the selected force case"
     return (
-        f"{i.n:g} x ({v['eccentricity']:.3f} - {i.plate_l:g}/2 + {v['compression_x']:.3f}/3) / "
+        f"{i.n:g} x ({v['eccentricity_abs']:.3f} - {i.plate_l:g}/2 + {v['compression_x']:.3f}/3) / "
         f"({i.plate_l:g} - {v['l1']:.3f} - {v['compression_x']:.3f}/3)"
     )
 
@@ -613,11 +623,11 @@ def _add_note_box(doc: Document, title: str, notes: Iterable[str]) -> None:
 
 def _make_interaction_diagram(results: AnchorResults) -> Path:
     path = Path(tempfile.gettempdir()) / "anchor_bolt_interaction_diagram.png"
-    img = Image.new("RGB", (760, 430), "white")
+    img = Image.new("RGB", (1020, 540), "white")
     draw = ImageDraw.Draw(img)
     font = _font(22)
     small = _font(18)
-    _draw_interaction_plot(draw, 95, 52, 560, 280, results, font, small)
+    _draw_interaction_plot(draw, 50, 62, 920, 390, results, font, small)
     img.save(path)
     return path
 
@@ -918,7 +928,7 @@ def _draw_report_shear_breakout(draw: ImageDraw.ImageDraw, x: float, y: float, b
     _draw_report_bolt_with_nut(draw, ax, plate_top, concrete_bottom - 28, rod_color=orange)
     _arrow(draw, (ax + 26, plate_top - 8), (ax + 86, plate_top - 8), green, 12)
     draw.text((ax + 90, plate_top - 24), "Vua", fill=green, font=small)
-    rebar_y = concrete_top + 34
+    rebar_y = concrete_top + 18
     rebar_right = x2 + bw2 - 22
     radius = 16
     draw.line((x2 + 18, rebar_y, rebar_right - radius, rebar_y), fill=red, width=5)
@@ -945,27 +955,79 @@ def _draw_interaction_plot(
     black = "#111827"
     blue = "#2563EB"
     grey = "#475569"
+    red = "#DC2626"
+    green = "#15803D"
+    rule = "#CBD5E1"
     draw.rounded_rectangle((x, y, x + w, y + h), radius=10, fill="#F8FAFC", outline="#CBD5E1", width=2)
-    draw.text((x + 18, y + 16), "ACI 318-19 17.8 interaction check", fill=black, font=font)
-    lines = [
-        "17.8.2: If eta_N <= 0.2 or eta_V <= 0.2, interaction may be neglected.",
-        "17.8.3: Otherwise, eta_N + eta_V <= 1.2.",
-        f"Current eta_N = {results.governing_tension_ratio:.3f}",
-        f"Current eta_V = {results.governing_shear_ratio:.3f}",
-    ]
-    if results.values.get("interaction_sum") is not None:
-        lines.append(f"Current sum = {results.values['interaction_sum']:.3f} <= 1.2")
-    elif results.values["vua"] <= 1.0e-9:
-        lines.append("Current result: not applicable; anchor shear demand is zero.")
-    elif not results.values.get("interaction_same_anchor_group", True):
-        lines.append("Current result: not applicable; tension and shear act on different rows.")
+    draw.text((x + 18, y + 14), "ACI 318-19 Fig. R17.8 - Tension and shear interaction", fill=black, font=font)
+
+    eta_n = results.governing_tension_ratio
+    eta_v = results.governing_shear_ratio
+    interaction_sum = results.values.get("interaction_sum")
+    same_anchor_group = results.values.get("interaction_same_anchor_group", True)
+    shear_demand = results.values.get("vua", 0.0)
+    show_current_point = shear_demand > 1.0e-9 and same_anchor_group and interaction_sum is not None
+    current_color = green if show_current_point and interaction_sum <= 1.2 else red
+
+    plot_x = x + 58
+    plot_y = y + 96
+    plot_w = max(230, min(w * 0.50, h * 1.05))
+    plot_h = max(170, min(h - 150, plot_w * 0.72))
+    axis_max = max(1.2, eta_n * 1.12, eta_v * 1.12)
+    axis_max = min(max(axis_max, 1.2), 2.4)
+    axis_x0 = plot_x
+    axis_y0 = plot_y + plot_h
+
+    def px(value: float) -> float:
+        return plot_x + max(0.0, min(value, axis_max)) / axis_max * plot_w
+
+    def py(value: float) -> float:
+        return plot_y + plot_h - max(0.0, min(value, axis_max)) / axis_max * plot_h
+
+    _draw_line_arrow(draw, axis_x0, axis_y0, axis_x0 + plot_w + 16, axis_y0, black, width=3)
+    _draw_line_arrow(draw, axis_x0, axis_y0, axis_x0, plot_y - 18, black, width=3)
+    draw.text((axis_x0 + plot_w + 18, axis_y0 - 6), "Vua/(phi Vn)", fill=black, font=small)
+    draw.text((axis_x0 - 4, plot_y - 46), "Nua/(phi Nn)", fill=black, font=small)
+
+    for value, label in ((0.2, "0.2"), (1.0, "1.0")):
+        draw.line((px(value), axis_y0 - 5, px(value), axis_y0 + 5), fill=black, width=2)
+        draw.text((px(value) - 12, axis_y0 + 8), label, fill=black, font=small)
+        draw.line((axis_x0 - 5, py(value), axis_x0 + 5, py(value)), fill=black, width=2)
+        draw.text((axis_x0 - 40, py(value) - 10), label, fill=black, font=small)
+
+    envelope = [(0.0, 1.0), (0.2, 1.0), (1.0, 0.2), (1.0, 0.0)]
+    envelope_points = [(px(v), py(n)) for v, n in envelope]
+    for p1, p2 in zip(envelope_points, envelope_points[1:]):
+        draw.line((p1[0], p1[1], p2[0], p2[1]), fill=blue, width=5)
+    draw.text((px(0.50), py(0.80) - 24), "eta_N + eta_V = 1.2", fill=blue, font=small)
+
+    if show_point and show_current_point:
+        dot_x = px(eta_v)
+        dot_y = py(eta_n)
+        draw.ellipse((dot_x - 7, dot_y - 7, dot_x + 7, dot_y + 7), fill=current_color, outline=current_color)
+        draw.text((dot_x + 10, dot_y - 18), "Current", fill=current_color, font=small)
+
+    text_x = plot_x + plot_w + 60
+    text_y = plot_y + 4
+    text_w = max(180, int(x + w - text_x - 26))
+    _draw_wrapped_text(draw, (text_x, text_y), "Solid line: ACI 318-19 R17.8 trilinear interaction approach.", small, black, text_w)
+    box_y = text_y + 86
+    if show_current_point:
+        draw.text((text_x, text_y + 58), f"Current point: eta_V = {eta_v:.3f}, eta_N = {eta_n:.3f}", fill=current_color, font=small)
+        box_y = text_y + 106
+    if shear_demand <= 1.0e-9:
+        result_text = "Not applicable: anchor shear demand after friction is zero."
+    elif not same_anchor_group:
+        result_text = "Not applicable: tension and shear are resisted by different anchor rows."
+    elif eta_n <= 0.2 or eta_v <= 0.2:
+        result_text = "17.8.2 permits neglecting interaction when eta_N <= 0.2 or eta_V <= 0.2."
+    elif interaction_sum is None:
+        result_text = "Interaction check is not required for the current state."
     else:
-        lines.append("Current result: interaction may be neglected.")
-    for idx, line in enumerate(lines):
-        fill = blue if idx >= 2 else grey
-        draw.text((x + 28, y + 58 + idx * 34), line, fill=fill, font=small)
-    if show_point:
-        draw.ellipse((x + w - 36, y + 22, x + w - 18, y + 40), fill=blue, outline=black, width=2)
+        op = "<=" if interaction_sum <= 1.2 else ">"
+        result_text = f"17.8.3: eta_N + eta_V = {interaction_sum:.3f} {op} 1.2."
+    draw.rounded_rectangle((text_x, box_y, x + w - 18, min(y + h - 18, box_y + 108)), radius=6, fill="#FFFFFF", outline=rule, width=1)
+    _draw_wrapped_text(draw, (text_x + 12, box_y + 12), result_text, small, grey, max(150, text_w - 24))
 
 
 def _make_report_diagram(results: AnchorResults) -> Path:
@@ -1021,7 +1083,7 @@ def _make_report_diagram(results: AnchorResults) -> Path:
     _arrow(draw, (cx, selected_y - 80), (cx, selected_y + 80), blue, 14)
     draw.text((cx + 24, selected_y + 16), "V", fill=blue, font=font)
     moment_r = max(42, min(70, plate_w * 0.16, plate_h * 0.16))
-    _curved_moment(draw, (cx - moment_r * 0.6, cy + moment_r * 0.15), int(moment_r), blue, font)
+    _curved_moment(draw, (cx - moment_r * 0.6, cy + moment_r * 0.15), int(moment_r), blue, font, positive=i.m >= 0.0)
     draw.text((origin_x, origin_y + ped_h + 126), selected_label, fill=blue, font=small)
     if released_y is not None:
         draw.text((cx - 130, released_y + 36), "slotted holes release shear", fill="#64748B", font=_font(18))
@@ -1216,20 +1278,32 @@ def _arrow(draw: ImageDraw.ImageDraw, p1, p2, color: str, head: int) -> None:
     draw.polygon([p2, left, right], fill=color)
 
 
-def _curved_moment(draw: ImageDraw.ImageDraw, center, radius: int, color: str, font) -> None:
+def _draw_line_arrow(draw: ImageDraw.ImageDraw, x1: float, y1: float, x2: float, y2: float, color: str, width: int = 2) -> None:
+    draw.line((x1, y1, x2, y2), fill=color, width=width)
+    angle = math.atan2(y2 - y1, x2 - x1)
+    head = 10
+    left = (x2 - head * math.cos(angle - 0.55), y2 - head * math.sin(angle - 0.55))
+    right = (x2 - head * math.cos(angle + 0.55), y2 - head * math.sin(angle + 0.55))
+    draw.polygon([(x2, y2), left, right], fill=color)
+
+
+def _curved_moment(draw: ImageDraw.ImageDraw, center, radius: int, color: str, font, positive: bool = True) -> None:
     x, y = center
-    box = (x - radius, y - radius, x + radius, y + radius)
-    draw.arc(box, start=90, end=270, fill=color, width=7)
-    tip = (x, y + radius)
+    points = []
+    for step in range(28):
+        ratio = step / 27.0
+        angle = math.radians(270 - 180 * ratio if positive else 90 + 180 * ratio)
+        points.append((x + radius * math.cos(angle), y + radius * math.sin(angle)))
+    draw.line(points, fill=color, width=7, joint="curve")
+
+    tip = points[-1]
+    prev = points[-2]
+    tangent = math.atan2(tip[1] - prev[1], tip[0] - prev[0])
     head = 18
-    draw.polygon(
-        [
-            tip,
-            (tip[0] - head, tip[1] - head * 0.48),
-            (tip[0] - head, tip[1] + head * 0.48),
-        ],
-        fill=color,
-    )
+    spread = math.radians(28)
+    left = (tip[0] - head * math.cos(tangent - spread), tip[1] - head * math.sin(tangent - spread))
+    right = (tip[0] - head * math.cos(tangent + spread), tip[1] - head * math.sin(tangent + spread))
+    draw.polygon([tip, left, right], fill=color)
     draw.text((x + radius * 0.45, y + radius * 0.62), "M", fill=color, font=font)
 
 
@@ -1247,11 +1321,33 @@ def _font(size: int):
     return ImageFont.load_default()
 
 
+def _draw_wrapped_text(draw: ImageDraw.ImageDraw, xy, text: str, font, fill: str, max_width: int, line_spacing: int = 4) -> None:
+    x, y = xy
+    words = text.split()
+    lines: list[str] = []
+    current = ""
+    for word in words:
+        candidate = word if not current else f"{current} {word}"
+        bbox = draw.textbbox((0, 0), candidate, font=font)
+        if bbox[2] - bbox[0] <= max_width or not current:
+            current = candidate
+        else:
+            lines.append(current)
+            current = word
+    if current:
+        lines.append(current)
+    line_height = draw.textbbox((0, 0), "Ag", font=font)[3] + line_spacing
+    for idx, line in enumerate(lines):
+        draw.text((x, y + idx * line_height), line, fill=fill, font=font)
+
+
 def _dim_label(symbol: str, value: float) -> str:
     return f"{symbol}={_fmt(value, 1)}"
 
 
-def _fmt(value: float, decimals: int = 3) -> str:
+def _fmt(value: float | str, decimals: int = 3) -> str:
+    if isinstance(value, str):
+        return value
     if abs(value) >= 1000 and decimals > 1:
         return f"{value:,.{decimals}f}"
     return f"{value:.{decimals}f}".rstrip("0").rstrip(".")

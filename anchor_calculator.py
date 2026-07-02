@@ -56,8 +56,8 @@ INPUT_SPECS: tuple[InputSpec, ...] = (
     InputSpec("tension_rebar_factor", "抗拉实配钢筋放大系数", "k_As,N", "-", 1.10, "Materials", "Multiplier applied to the calculated required tension anchor reinforcement area.", 3),
     InputSpec("shear_rebar_factor", "抗剪实配钢筋放大系数", "k_As,V", "-", 1.10, "Materials", "Multiplier applied to the calculated required shear anchor reinforcement area.", 3),
     InputSpec("n", "轴力设计值", "N", "kN", 20.0, "Loads", "Positive value means downward compression at the base plate.", 2),
-    InputSpec("m", "弯矩设计值", "M", "kN.m", 25.0, "Loads", "Positive value creates tension in one anchor row as shown in the diagram.", 2),
-    InputSpec("v", "剪力设计值", "V", "kN", 15.0, "Loads", "Positive value acts in the blue-arrow direction shown in the diagram.", 2),
+    InputSpec("m", "弯矩设计值", "M", "kN.m", 25.0, "Loads", "Moment may be positive or negative. The sign controls the tension anchor row; the force magnitude uses |M|/N.", 2),
+    InputSpec("v", "剪力设计值", "V", "kN", 15.0, "Loads", "Positive value acts in the blue-arrow direction shown in the diagram. Negative shear is not accepted.", 2),
     InputSpec("mu", "界面摩擦系数", "μ", "-", 0.4, "Loads", "Coefficient used for friction force Vfb = mu x (Ta + N).", 3),
     InputSpec("phi_tension_steel", "钢材抗拉折减系数", "φ (for Nsa)", "-", 0.75, "Factors", "Strength reduction factor for steel tension.", 3),
     InputSpec("psi_ec_n", "抗拉偏心修正", "ψec,N", "-", 1.0, "Factors", "Modification factor for eccentricity effects in tension breakout.", 3),
@@ -329,6 +329,9 @@ def calculate_anchor(inputs: AnchorInputs) -> AnchorResults:
         ca1=ca1,
         ca2=ca2,
         eccentricity=eccentricity,
+        eccentricity_abs=force["eccentricity_abs"],
+        tension_anchor_row=force["tension_anchor_row"],
+        tension_anchor_row_label=force["tension_anchor_row_label"],
         sigma_max=sigma_max,
         sigma_min=sigma_min,
         compression_x=compression_x,
@@ -535,7 +538,9 @@ def calculate_anchor(inputs: AnchorInputs) -> AnchorResults:
     shear_breakout_interaction_ratio = _safe_ratio(vuag, shear_rebar_strength) if shear_rebar_area > 0.0 else shear_breakout_ratio
     tension_ratio_for_interaction = max(tension_steel_ratio, tension_breakout_interaction_ratio, pullout_ratio)
     shear_ratio_for_interaction = max(shear_steel_ratio, shear_breakout_interaction_ratio, pryout_ratio)
-    same_anchor_group_for_interaction = i.shear_case == 2
+    shear_resisting_row = "bottom" if i.shear_case == 1 else "top"
+    tension_anchor_row = str(force["tension_anchor_row"])
+    same_anchor_group_for_interaction = shear_resisting_row == tension_anchor_row
     if nua <= 0.0 or not shear_required:
         interaction_value: float | None = None
         interaction_5_3 = CheckResult(
@@ -556,8 +561,9 @@ def calculate_anchor(inputs: AnchorInputs) -> AnchorResults:
             "ACI 318-19 17.8.1",
             "Tension-shear interaction applies to anchors or anchor groups resisting both tension and shear",
             (
-                f"Case {i.shear_case}: eta_N = {tension_ratio_for_interaction:.3f}; "
-                f"eta_V = {shear_ratio_for_interaction:.3f}"
+                f"Case {i.shear_case}: shear row = {shear_resisting_row}; "
+                f"tension row = {tension_anchor_row}; "
+                f"eta_N = {tension_ratio_for_interaction:.3f}; eta_V = {shear_ratio_for_interaction:.3f}"
             ),
             None,
             None,
@@ -584,11 +590,12 @@ def calculate_anchor(inputs: AnchorInputs) -> AnchorResults:
         )
     else:
         interaction_value = tension_ratio_for_interaction + shear_ratio_for_interaction
+        interaction_op = "<=" if interaction_value <= 1.2 else ">"
         interaction_5_3 = CheckResult(
             "Tension-shear interaction",
             "ACI 318-19 17.8.3",
             "Nua/(phi Nn) + Vua/(phi Vn) <= 1.2",
-            f"{tension_ratio_for_interaction:.3f} + {shear_ratio_for_interaction:.3f} = {interaction_value:.3f} <= 1.2",
+            f"{tension_ratio_for_interaction:.3f} + {shear_ratio_for_interaction:.3f} = {interaction_value:.3f} {interaction_op} 1.2",
             None,
             None,
             interaction_value / 1.2,
@@ -643,6 +650,7 @@ def calculate_anchor(inputs: AnchorInputs) -> AnchorResults:
         shear_rebar_strength=shear_rebar_strength,
         tension_breakout_interaction_ratio=tension_breakout_interaction_ratio,
         shear_breakout_interaction_ratio=shear_breakout_interaction_ratio,
+        shear_resisting_row=shear_resisting_row,
         interaction_same_anchor_group=same_anchor_group_for_interaction,
         interaction_applicable=(nua > 0.0 and shear_required and same_anchor_group_for_interaction),
         interaction_sum=interaction_value,
@@ -684,7 +692,10 @@ def _manual_force_distribution(i: AnchorInputs) -> dict[str, Any]:
     if l1 <= 0:
         raise CalculationError("Base plate length l must be greater than anchor spacing s1 for the force distribution model.")
 
-    eccentricity = i.m / i.n * 1000.0
+    eccentricity_signed = i.m / i.n * 1000.0
+    eccentricity = abs(eccentricity_signed)
+    tension_row = "top" if i.m >= 0.0 else "bottom"
+    tension_row_label = "Top anchor row" if tension_row == "top" else "Bottom anchor row"
     ae_star = TENSION_ANCHOR_COUNT * i.ase
     ec = i.ec_modulus * 10_000.0
     es = i.es_modulus * 100_000.0
@@ -694,7 +705,7 @@ def _manual_force_distribution(i: AnchorInputs) -> dict[str, Any]:
 
     if eccentricity <= case_a_limit + 1.0e-9:
         force_case = "a"
-        force_case_label = "Case a: e <= l/6, full base plate compression"
+        force_case_label = "Case a: |e| <= l/6, full base plate compression"
         compression_x = plate_l
         sigma_max = i.n * 1000.0 / (plate_l * plate_b) * (1.0 + 6.0 * eccentricity / plate_l)
         sigma_min = i.n * 1000.0 / (plate_l * plate_b) * (1.0 - 6.0 * eccentricity / plate_l)
@@ -706,7 +717,7 @@ def _manual_force_distribution(i: AnchorInputs) -> dict[str, Any]:
         )
     elif eccentricity <= case_b_limit + 1.0e-9:
         force_case = "b"
-        force_case_label = "Case b: l/6 < e <= l/6 + l1/3, triangular compression without anchor tension"
+        force_case_label = "Case b: l/6 < |e| <= l/6 + l1/3, triangular compression without anchor tension"
         compression_x = 3.0 * (plate_l / 2.0 - eccentricity)
         if compression_x <= 0:
             raise CalculationError("Compression depth became non-positive in force distribution case b.")
@@ -720,7 +731,7 @@ def _manual_force_distribution(i: AnchorInputs) -> dict[str, Any]:
         )
     else:
         force_case = "c"
-        force_case_label = "Case c: e > l/6 + l1/3, anchor tension with partial compression"
+        force_case_label = "Case c: |e| > l/6 + l1/3, anchor tension with partial compression"
         compression_x = _solve_manual_compression_depth(
             eccentricity=eccentricity,
             plate_l=plate_l,
@@ -751,7 +762,10 @@ def _manual_force_distribution(i: AnchorInputs) -> dict[str, Any]:
     return {
         "force_case": force_case,
         "force_case_label": force_case_label,
-        "eccentricity": eccentricity,
+        "eccentricity": eccentricity_signed,
+        "eccentricity_abs": eccentricity,
+        "tension_anchor_row": tension_row,
+        "tension_anchor_row_label": tension_row_label,
         "sigma_max": sigma_max,
         "sigma_min": sigma_min,
         "compression_x": compression_x,
@@ -830,10 +844,10 @@ def _validate_inputs(i: AnchorInputs) -> None:
     for field_name in positive_fields:
         if getattr(i, field_name) <= 0:
             raise CalculationError(f"{field_name} must be greater than 0.")
-    nonnegative_fields = ["m", "v", "mu"]
+    nonnegative_fields = ["v", "mu"]
     for field_name in nonnegative_fields:
         if getattr(i, field_name) < 0:
-            raise CalculationError(f"{field_name} must not be negative. Use the direction option and diagram for sign convention.")
+            raise CalculationError(f"{field_name} must not be negative. Use the diagram for sign convention.")
     if i.pedestal_l <= i.s1:
         raise CalculationError("Pedestal length L must be greater than anchor spacing s1.")
     if i.pedestal_b <= i.s2:

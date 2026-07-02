@@ -2,7 +2,7 @@
 
 Windows desktop calculator for a four-anchor photovoltaic tracker support base plate, based on ACI 318-19 Chapter 17 and the internal force workflow from 《钢结构节点设计手册》（第四版）.
 
-Current release: `v1.0.1`
+Current release: `v1.0.2`
 
 ## Download
 
@@ -13,7 +13,7 @@ https://github.com/Lumen-netizen/solar-tracker-anchor-bolt-calculator/releases
 Release asset:
 
 ```text
-solar-tracker-anchor-bolt-calculator_v1.0.1.exe
+solar-tracker-anchor-bolt-calculator_v1.0.2.exe
 ```
 
 ## Scope
@@ -64,11 +64,11 @@ dist\光伏跟踪支架地脚螺栓计算程序.exe
 The versioned release copy is written to:
 
 ```text
-dist\光伏跟踪支架地脚螺栓计算程序_v1.0.1.exe
+dist\光伏跟踪支架地脚螺栓计算程序_v1.0.2.exe
 ```
 
 For GitHub Release assets, the uploaded file is renamed in English for compatibility:
 
 ```text
-solar-tracker-anchor-bolt-calculator_v1.0.1.exe
+solar-tracker-anchor-bolt-calculator_v1.0.2.exe
 ```
