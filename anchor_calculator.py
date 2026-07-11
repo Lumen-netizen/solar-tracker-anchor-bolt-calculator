@@ -13,7 +13,15 @@ SHEAR_CASE_LABELS = {
 
 TENSION_ANCHOR_COUNT = 2
 SHEAR_ANCHOR_COUNT = 2
-AUTO_FACTOR_KEYS = {"psi_ec_n", "psi_ec_v", "psi_h_v", "kcp"}
+AUTO_FACTOR_KEYS = {
+    "psi_ec_n",
+    "psi_cp_n",
+    "phi_pullout",
+    "psi_ec_v",
+    "psi_h_v",
+    "kcp",
+    "phi_pryout",
+}
 PSI_TO_MPA = 0.006894757293168361
 ACI_MAX_CAST_IN_FC_PRIME_MPA = 10000.0 * PSI_TO_MPA
 ACI_MAX_FUTA_MPA = 125000.0 * PSI_TO_MPA
@@ -62,17 +70,18 @@ INPUT_SPECS: tuple[InputSpec, ...] = (
     InputSpec("phi_tension_steel", "钢材抗拉折减系数", "φ (for Nsa)", "-", 0.75, "Factors", "Strength reduction factor for steel tension.", 3),
     InputSpec("psi_ec_n", "抗拉偏心修正", "ψec,N", "-", 1.0, "Factors", "Modification factor for eccentricity effects in tension breakout.", 3),
     InputSpec("psi_c_n", "抗拉开裂修正", "ψc,N", "-", 1.25, "Factors", "Modification factor for cracking in tension breakout.", 3),
-    InputSpec("psi_cp_n", "抗拉劈裂修正", "ψcp,N", "-", 1.0, "Factors", "Modification factor for splitting effects in tension breakout.", 3),
+    InputSpec("psi_cp_n", "抗拉劈裂修正", "ψcp,N", "-", 1.0, "Factors", "Splitting factor for cast-in anchors, fixed at 1.0 by ACI 318-19 17.6.2.6.2.", 3),
     InputSpec("phi_tension_concrete", "混凝土抗拉折减系数", "φ (for Ncbg)", "-", 0.75, "Factors", "Strength reduction factor for concrete breakout in tension.", 3),
     InputSpec("psi_c_p", "拔出开裂修正", "ψc,P", "-", 1.4, "Factors", "Modification factor for pullout strength.", 3),
-    InputSpec("phi_pullout", "拔出折减系数", "φ (for Npn)", "-", 0.75, "Factors", "Strength reduction factor for pullout strength.", 3),
+    InputSpec("phi_pullout", "拔出折减系数", "φ (for Npn)", "-", 0.70, "Factors", "Strength reduction factor for pullout of cast-in anchors per ACI 318-19 Table 17.5.3(c).", 3),
     InputSpec("phi_shear_steel", "钢材抗剪折减系数", "φ (for Vsa)", "-", 0.65, "Factors", "Strength reduction factor for steel shear.", 3),
     InputSpec("psi_ec_v", "抗剪偏心修正", "ψec,V", "-", 1.0, "Factors", "Modification factor for eccentricity effects in shear breakout.", 3),
     InputSpec("psi_c_v", "抗剪开裂修正", "ψc,V", "-", 1.2, "Factors", "Modification factor for cracking in shear breakout.", 3),
+    InputSpec("k_stm", "抗剪锚固钢筋传力放大系数", "kSTM", "-", 1.20, "Factors", "Strut-and-tie force amplification factor for shear anchor reinforcement.", 3),
     InputSpec("psi_h_v", "厚度修正", "ψh,V", "-", 1.0, "Factors", "Modification factor for member thickness in shear breakout.", 3),
     InputSpec("phi_shear_concrete", "混凝土抗剪折减系数", "φ (for Vcbg)", "-", 0.75, "Factors", "Strength reduction factor for concrete breakout in shear.", 3),
     InputSpec("kcp", "撬出系数", "kcp", "-", 2.0, "Factors", "Coefficient for concrete pryout strength.", 3),
-    InputSpec("phi_pryout", "撬出折减系数", "φ (for Vcpg)", "-", 0.75, "Factors", "Strength reduction factor for concrete pryout strength.", 3),
+    InputSpec("phi_pryout", "撬出折减系数", "φ (for Vcpg)", "-", 0.70, "Factors", "Strength reduction factor for concrete pryout of cast-in anchors per ACI 318-19 Table 17.5.3(c).", 3),
 )
 
 
@@ -130,6 +139,7 @@ class AnchorInputs:
     shear_case: int = 1
     psi_ec_v: float = DEFAULT_VALUES["psi_ec_v"]
     psi_c_v: float = DEFAULT_VALUES["psi_c_v"]
+    k_stm: float = DEFAULT_VALUES["k_stm"]
     psi_h_v: float = DEFAULT_VALUES["psi_h_v"]
     phi_shear_concrete: float = DEFAULT_VALUES["phi_shear_concrete"]
     fy_shear_rebar: float = DEFAULT_VALUES["fy_shear_rebar"]
@@ -274,7 +284,7 @@ def calc_shear_breakout_geometry(inputs: AnchorInputs) -> ShearBreakoutGeometry:
     width_left = min(ca2, projection)
     width_right = min(ca2, projection)
     projected_width = width_left + i.s2 + width_right
-    projected_depth = projection
+    projected_depth = min(i.ha, projection)
     area = projected_width * projected_depth
     reference_area = 4.5 * ca1_used**2
     capped_area = min(area, SHEAR_ANCHOR_COUNT * reference_area)
@@ -303,9 +313,8 @@ def calc_shear_breakout_geometry(inputs: AnchorInputs) -> ShearBreakoutGeometry:
 
 
 def calculate_anchor(inputs: AnchorInputs) -> AnchorResults:
-    _validate_inputs(inputs)
-
-    i = inputs
+    i = replace(inputs, psi_cp_n=1.0, phi_pullout=0.70, phi_pryout=0.70)
+    _validate_inputs(i)
     values: dict[str, Any] = {}
     warnings: list[str] = []
     checks: list[CheckResult] = []
@@ -353,8 +362,9 @@ def calculate_anchor(inputs: AnchorInputs) -> AnchorResults:
         vuag=vuag,
     )
 
-    checks.append(_limit_check("Minimum spacing s1", "ACI 318-19 17.9.1", "s1 >= 4da", f"{i.s1:g} >= 4 x {i.da:g}", i.s1, 4.0 * i.da, i.s1 / (4.0 * i.da), "OK" if i.s1 >= 4.0 * i.da else "NG"))
-    checks.append(_limit_check("Minimum spacing s2", "ACI 318-19 17.9.1", "s2 >= 4da", f"{i.s2:g} >= 4 x {i.da:g}", i.s2, 4.0 * i.da, i.s2 / (4.0 * i.da), "OK" if i.s2 >= 4.0 * i.da else "NG"))
+    spacing_reference = "ACI 318-19 17.9.2 / Table 17.9.2(a)"
+    checks.append(_limit_check("Minimum spacing s1", spacing_reference, "s1 >= 4da", f"{i.s1:g} >= 4 x {i.da:g}", i.s1, 4.0 * i.da, i.s1 / (4.0 * i.da), "OK" if i.s1 >= 4.0 * i.da else "NG"))
+    checks.append(_limit_check("Minimum spacing s2", spacing_reference, "s2 >= 4da", f"{i.s2:g} >= 4 x {i.da:g}", i.s2, 4.0 * i.da, i.s2 / (4.0 * i.da), "OK" if i.s2 >= 4.0 * i.da else "NG"))
     checks.append(
         _limit_check(
             "Minimum member thickness ha",
@@ -496,7 +506,8 @@ def calculate_anchor(inputs: AnchorInputs) -> AnchorResults:
             )
         )
         shear_breakout_ratio = _safe_ratio(vuag, i.phi_shear_concrete * vcbg)
-        shear_rebar_area = vuag * 1000.0 / i.fy_shear_rebar if shear_breakout_ratio > 1.0 else 0.0
+        shear_rebar_design_force = i.k_stm * vuag
+        shear_rebar_area = shear_rebar_design_force * 1000.0 / i.fy_shear_rebar if shear_breakout_ratio > 1.0 else 0.0
         checks.append(
             CheckResult(
                 "Concrete breakout strength in shear",
@@ -513,7 +524,11 @@ def calculate_anchor(inputs: AnchorInputs) -> AnchorResults:
                 i.phi_shear_concrete * vcbg,
                 shear_breakout_ratio,
                 "OK" if shear_breakout_ratio <= 1.0 else "Rebar Required",
-                f"{SHEAR_CASE_LABELS[i.shear_case]}. Anchor group demand Vua,g is used.",
+                (
+                    f"{SHEAR_CASE_LABELS[i.shear_case]}. Anchor group demand Vua,g is used. "
+                    f"If anchor reinforcement is required, Tu,STM = kSTM x Vua,g = "
+                    f"{i.k_stm:.3f} x {vuag:.3f} = {shear_rebar_design_force:.3f} kN."
+                ),
             )
         )
         pryout_ratio = _safe_ratio(vuag, i.phi_pryout * vcpg)
@@ -531,11 +546,12 @@ def calculate_anchor(inputs: AnchorInputs) -> AnchorResults:
         )
 
     tension_rebar_provided_area = tension_rebar_area * i.tension_rebar_factor
+    shear_rebar_design_force = i.k_stm * vuag if shear_rebar_area > 0.0 else 0.0
     shear_rebar_provided_area = shear_rebar_area * i.shear_rebar_factor
     tension_rebar_strength = tension_rebar_provided_area * i.fy_tension_rebar / 1000.0
     shear_rebar_strength = shear_rebar_provided_area * i.fy_shear_rebar / 1000.0
     tension_breakout_interaction_ratio = _safe_ratio(nuag, tension_rebar_strength) if tension_rebar_area > 0.0 else tension_breakout_ratio
-    shear_breakout_interaction_ratio = _safe_ratio(vuag, shear_rebar_strength) if shear_rebar_area > 0.0 else shear_breakout_ratio
+    shear_breakout_interaction_ratio = _safe_ratio(shear_rebar_design_force, shear_rebar_strength) if shear_rebar_area > 0.0 else shear_breakout_ratio
     tension_ratio_for_interaction = max(tension_steel_ratio, tension_breakout_interaction_ratio, pullout_ratio)
     shear_ratio_for_interaction = max(shear_steel_ratio, shear_breakout_interaction_ratio, pryout_ratio)
     shear_resisting_row = "bottom" if i.shear_case == 1 else "top"
@@ -638,14 +654,19 @@ def calculate_anchor(inputs: AnchorInputs) -> AnchorResults:
         load_bearing_length=load_bearing_length,
         vb=vb,
         psi_ec_n=psi_ec_n,
+        psi_cp_n=i.psi_cp_n,
+        phi_pullout=i.phi_pullout,
         psi_ec_v=psi_ec_v,
         psi_ed_v=psi_ed_v,
         psi_h_v=psi_h_v,
         kcp=kcp,
+        phi_pryout=i.phi_pryout,
         vcbg=vcbg,
         vcpg=vcpg,
         tension_rebar_provided_area=tension_rebar_provided_area,
         shear_rebar_provided_area=shear_rebar_provided_area,
+        k_stm=i.k_stm,
+        shear_rebar_design_force=shear_rebar_design_force,
         tension_rebar_strength=tension_rebar_strength,
         shear_rebar_strength=shear_rebar_strength,
         tension_breakout_interaction_ratio=tension_breakout_interaction_ratio,
@@ -840,6 +861,7 @@ def _validate_inputs(i: AnchorInputs) -> None:
         "eh",
         "fy_shear_rebar",
         "shear_rebar_factor",
+        "k_stm",
     ]
     for field_name in positive_fields:
         if getattr(i, field_name) <= 0:
@@ -848,6 +870,8 @@ def _validate_inputs(i: AnchorInputs) -> None:
     for field_name in nonnegative_fields:
         if getattr(i, field_name) < 0:
             raise CalculationError(f"{field_name} must not be negative. Use the diagram for sign convention.")
+    if i.k_stm < 1.0:
+        raise CalculationError("kSTM must be at least 1.0 for the shear anchor reinforcement load-transfer model.")
     if i.pedestal_l <= i.s1:
         raise CalculationError("Pedestal length L must be greater than anchor spacing s1.")
     if i.pedestal_b <= i.s2:

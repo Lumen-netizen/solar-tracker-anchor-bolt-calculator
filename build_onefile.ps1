@@ -3,7 +3,7 @@ $ErrorActionPreference = "Stop"
 $AppDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $Python = Join-Path $AppDir ".venv\Scripts\python.exe"
 $AppName = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String("5YWJ5LyP6Lef6Liq5pSv5p625Zyw6ISa6J665qCT6K6h566X56iL5bqP"))
-$AppVersion = "1.0.2"
+$AppVersion = "1.1.0"
 $ReleaseExeName = "$($AppName)_v$AppVersion.exe"
 $ReleaseAssetName = "solar-tracker-anchor-bolt-calculator_v$AppVersion.exe"
 
@@ -26,16 +26,17 @@ Push-Location $AppDir
 try {
     & $Python -m PyInstaller `
         --noconfirm `
+        --clean `
         --onefile `
         --windowed `
         --name $AppName `
         --icon "assets\anchor_plate.ico" `
         --version-file "version_info.txt" `
         --add-data "assets;assets" `
-        --add-data "tkinter;tkinter" `
-        --add-data "runtime_tcl;runtime_tcl" `
+        --add-data "tkinter\*.py;tkinter" `
         --add-data "runtime_tcl\tcl8.6;_tcl_data" `
         --add-data "runtime_tcl\tk8.6;_tk_data" `
+        --additional-hooks-dir "packaging_hooks" `
         --add-binary "$TkinterPyd;." `
         --add-binary "$TclDll;." `
         --add-binary "$TkDll;." `

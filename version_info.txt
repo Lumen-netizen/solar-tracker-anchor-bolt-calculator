@@ -16,11 +16,11 @@ VSVersionInfo(
         [
           StringStruct('CompanyName', 'Lumen-netizen'),
           StringStruct('FileDescription', 'Solar Tracker Anchor Bolt Calculator'),
-          StringStruct('FileVersion', '1.0.2.0'),
+          StringStruct('FileVersion', '1.1.0.0'),
           StringStruct('InternalName', 'solar-tracker-anchor-bolt-calculator'),
           StringStruct('OriginalFilename', 'solar-tracker-anchor-bolt-calculator.exe'),
           StringStruct('ProductName', 'Solar Tracker Anchor Bolt Calculator'),
-          StringStruct('ProductVersion', '1.0.2.0')
+          StringStruct('ProductVersion', '1.1.0.0')
         ]
       )
     ]),

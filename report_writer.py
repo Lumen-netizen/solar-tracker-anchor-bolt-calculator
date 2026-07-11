@@ -58,6 +58,7 @@ PARAMETER_LABELS_EN = {
     "fy_shear_rebar": "Design strength of shear anchor reinforcement",
     "tension_rebar_factor": "Provided tension reinforcement amplification factor",
     "shear_rebar_factor": "Provided shear reinforcement amplification factor",
+    "k_stm": "Shear anchor reinforcement force amplification factor",
     "n": "Factored axial compression",
     "m": "Factored base moment",
     "v": "Factored horizontal shear",
@@ -182,8 +183,10 @@ def _add_design_basis(doc: Document, results: AnchorResults) -> None:
         "The demand model assumes uniaxial base moment and horizontal shear along the selected shear case direction. Biaxial moment, torsion, and arbitrary anchor coordinates are outside the current scope.",
         "Units are mm, MPa, kN, and kN.m. Strength ratios are calculated as demand divided by design strength.",
         "The anchor type is treated as a cast-in L-bolt. The ACI pullout expression for J- or L-bolts is used for pullout strength.",
+        "For the cast-in L-bolt model, psi_cp,N is fixed at 1.0 in accordance with ACI 318-19 17.6.2.6.2. The strength reduction factors for pullout and concrete pryout are each fixed at 0.70 in accordance with Table 17.5.3(c).",
         f"ACI 318-19 scope limits are enforced by the program: f'c for cast-in anchor calculations <= {ACI_MAX_CAST_IN_FC_PRIME_MPA:.1f} MPa per 17.3.1; futa <= {ACI_MAX_FUTA_MPA:.1f} MPa per 17.6.1.2 and 17.7.1.2; da <= {ACI_MAX_ANCHOR_DIAMETER_MM:.1f} mm per 17.3.2. The user shall also confirm futa <= 1.9fya because fya is not a program input.",
         "If interface friction is not sufficient for the applied horizontal shear, the residual shear is assigned to the two shear-resisting anchors and checked by ACI 318-19 Chapter 17.",
+        f"If shear anchor reinforcement is required, its design tie force is taken as Tu,STM = kSTM x Vua,g with kSTM = {results.inputs.k_stm:.3f}. ACI 318-19 R17.5.2.1 permits strut-and-tie design of anchor reinforcement but does not prescribe a universal kSTM value; the selected value shall be confirmed for the project load-transfer detail.",
         "Adhesive anchor bond failure is not applicable to this cast-in L-bolt model. Seismic-specific anchorage requirements, side-face blowout, and arbitrary anchor coordinates are outside the current scope.",
     ]
     _add_bullets(doc, bullets)
@@ -324,8 +327,11 @@ def _add_checks_section(doc: Document, results: AnchorResults) -> None:
             else:
                 doc.add_paragraph(
                     "The residual shear after interface friction is assigned to the two shear-resisting anchors. "
-                    f"When concrete shear breakout requires anchor reinforcement, the required shear reinforcement area is "
-                    f"As,V,req = {results.shear_rebar_area:.2f} mm2 and the provided area used for interaction is "
+                    "When concrete shear breakout requires anchor reinforcement, ACI 318-19 R17.5.2.1 permits a "
+                    "strut-and-tie load-transfer model. ACI 318-19 does not prescribe a universal kSTM value. "
+                    f"This calculation uses kSTM = {results.inputs.k_stm:.3f}, giving Tu,STM = kSTM x Vua,g = "
+                    f"{results.values['shear_rebar_design_force']:.3f} kN. The required shear reinforcement area is "
+                    f"As,V,req = Tu,STM / fy,V = {results.shear_rebar_area:.2f} mm2 and the provided area used for interaction is "
                     f"As,V,prov = {results.values['shear_rebar_provided_area']:.2f} mm2."
                 )
 
@@ -451,6 +457,8 @@ def _add_appendix(doc: Document, results: AnchorResults) -> None:
         ("vcpg", "Nominal pryout strength Vcpg", "kN"),
         ("tension_rebar_provided_area", "Provided tension anchor reinforcement area As,N,prov", "mm2"),
         ("shear_rebar_provided_area", "Provided shear anchor reinforcement area As,V,prov", "mm2"),
+        ("k_stm", "Shear anchor reinforcement force amplification factor kSTM", "-"),
+        ("shear_rebar_design_force", "Shear anchor reinforcement design tie force Tu,STM", "kN"),
         ("tension_breakout_interaction_ratio", "Tension breakout ratio used for interaction", "-"),
         ("shear_breakout_interaction_ratio", "Shear breakout ratio used for interaction", "-"),
     ):

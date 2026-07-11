@@ -66,7 +66,7 @@ class AnchorCalculatorTests(unittest.TestCase):
         self.assertAlmostEqual(by_name["Steel strength in tension"].ratio, 0.47766934563822255, places=9)
         self.assertAlmostEqual(by_name["Concrete breakout strength in tension"].ratio, 1.8358259208385113, places=9)
         self.assertEqual(by_name["Concrete breakout strength in tension"].status, "Rebar Required")
-        self.assertAlmostEqual(by_name["Pullout strength in tension"].ratio, 0.8140325978778757, places=9)
+        self.assertAlmostEqual(by_name["Pullout strength in tension"].ratio, 0.8721777834405811, places=9)
         self.assertIn("Minimum member thickness ha", by_name)
         self.assertEqual(by_name["Anchor shear demand after friction"].status, "Not Required")
         self.assertNotIn("Steel strength in shear", by_name)
@@ -102,6 +102,27 @@ class AnchorCalculatorTests(unittest.TestCase):
         self.assertAlmostEqual(far_row.projected_width, 400.0, places=9)
         self.assertAlmostEqual(far_row.area, 198000.0, places=9)
 
+    def test_shear_breakout_geometry_limits_projected_depth_to_member_thickness(self) -> None:
+        geometry = calc_shear_breakout_geometry(
+            AnchorInputs(hef=60.0, ha=80.0, pedestal_l=700.0, pedestal_b=1200.0)
+        )
+        self.assertAlmostEqual(geometry.ca1_used, 220.0, places=9)
+        self.assertAlmostEqual(geometry.projection, 330.0, places=9)
+        self.assertAlmostEqual(geometry.projected_width, 840.0, places=9)
+        self.assertAlmostEqual(geometry.projected_depth, 80.0, places=9)
+        self.assertAlmostEqual(geometry.area, 67200.0, places=9)
+
+    def test_cast_in_anchor_fixed_factors_override_user_values(self) -> None:
+        result = calculate_anchor(
+            AnchorInputs(psi_cp_n=0.25, phi_pullout=0.99, phi_pryout=0.99)
+        )
+        self.assertAlmostEqual(result.inputs.psi_cp_n, 1.0, places=9)
+        self.assertAlmostEqual(result.inputs.phi_pullout, 0.70, places=9)
+        self.assertAlmostEqual(result.inputs.phi_pryout, 0.70, places=9)
+        self.assertAlmostEqual(result.values["psi_cp_n"], 1.0, places=9)
+        self.assertAlmostEqual(result.values["phi_pullout"], 0.70, places=9)
+        self.assertAlmostEqual(result.values["phi_pryout"], 0.70, places=9)
+
     def test_minimum_spacing_equal_to_four_diameters_is_accepted(self) -> None:
         result = calculate_anchor(
             AnchorInputs(s1=88.0, s2=88.0, plate_l=198.0, plate_b=198.0, pedestal_l=300.0, pedestal_b=300.0, m=2.0)
@@ -111,6 +132,8 @@ class AnchorCalculatorTests(unittest.TestCase):
         self.assertEqual(by_name["Minimum spacing s2"].status, "OK")
         self.assertIn(">=", by_name["Minimum spacing s1"].formula)
         self.assertIn(">=", by_name["Minimum spacing s2"].formula)
+        self.assertIn("17.9.2", by_name["Minimum spacing s1"].section)
+        self.assertIn("Table 17.9.2(a)", by_name["Minimum spacing s2"].section)
 
     def test_shear_demand_can_control_when_friction_is_exceeded(self) -> None:
         result = calculate_anchor(AnchorInputs(v=120.0, shear_case=2))
@@ -171,6 +194,19 @@ class AnchorCalculatorTests(unittest.TestCase):
         self.assertLess(amplified.values["shear_breakout_interaction_ratio"], baseline.values["shear_breakout_interaction_ratio"])
         self.assertAlmostEqual(amplified.governing_shear_ratio, amplified_checks["Steel strength in shear"].ratio, places=9)
 
+    def test_kstm_amplifies_shear_reinforcement_force_and_required_area(self) -> None:
+        result = calculate_anchor(AnchorInputs(v=100.0, shear_case=1, k_stm=1.20))
+        self.assertGreater(result.shear_rebar_area, 0.0)
+        expected_force = 1.20 * result.values["vuag"]
+        expected_area = expected_force * 1000.0 / result.inputs.fy_shear_rebar
+        self.assertAlmostEqual(result.values["shear_rebar_design_force"], expected_force, places=9)
+        self.assertAlmostEqual(result.shear_rebar_area, expected_area, places=9)
+        self.assertAlmostEqual(result.values["shear_breakout_interaction_ratio"], 1.0 / result.inputs.shear_rebar_factor, places=9)
+
+    def test_kstm_cannot_be_less_than_one(self) -> None:
+        with self.assertRaisesRegex(CalculationError, "kSTM"):
+            calculate_anchor(AnchorInputs(k_stm=0.99))
+
     def test_manual_force_distribution_selects_three_eccentricity_cases(self) -> None:
         case_a = calculate_anchor(AnchorInputs(m=1.0))
         self.assertEqual(case_a.values["force_case"], "a")
@@ -223,6 +259,8 @@ class AnchorCalculatorTests(unittest.TestCase):
             text = "\n".join(p.text for p in doc.paragraphs)
             self.assertIn("Anchor Bolt Design Calculation Report", text)
             self.assertIn("ACI 318-19 Chapter 17", text)
+            self.assertIn("Table 17.5.3(c)", text)
+            self.assertIn("kSTM", text)
             self.assertGreaterEqual(len(doc.tables), 10)
 
 

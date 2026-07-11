@@ -11,14 +11,17 @@ def _configure_tcl_paths() -> None:
     if str(base) not in sys.path:
         sys.path.insert(0, str(base))
     candidates = [
-        base / "runtime_tcl",
-        base / "tcl",
-        Path(__file__).resolve().parent / "runtime_tcl",
+        (base / "_tcl_data", base / "_tk_data"),
+        (base / "runtime_tcl" / "tcl8.6", base / "runtime_tcl" / "tk8.6"),
+        (
+            Path(__file__).resolve().parent / "runtime_tcl" / "tcl8.6",
+            Path(__file__).resolve().parent / "runtime_tcl" / "tk8.6",
+        ),
     ]
-    for candidate in candidates:
-        if (candidate / "tcl8.6" / "init.tcl").exists() and (candidate / "tk8.6" / "tk.tcl").exists():
-            os.environ.setdefault("TCL_LIBRARY", str(candidate / "tcl8.6"))
-            os.environ.setdefault("TK_LIBRARY", str(candidate / "tk8.6"))
+    for tcl_dir, tk_dir in candidates:
+        if (tcl_dir / "init.tcl").exists() and (tk_dir / "tk.tcl").exists():
+            os.environ.setdefault("TCL_LIBRARY", str(tcl_dir))
+            os.environ.setdefault("TK_LIBRARY", str(tk_dir))
             return
 
 
@@ -31,7 +34,6 @@ from anchor_calculator import (
     AUTO_FACTOR_KEYS,
     DEFAULT_VALUES,
     INPUT_SPECS,
-    SHEAR_CASE_LABELS,
     AnchorInputs,
     AnchorResults,
     CalculationError,
@@ -42,7 +44,7 @@ from report_writer import write_calculation_report
 
 
 APP_TITLE = "光伏跟踪支架地脚螺栓计算程序"
-APP_VERSION = "1.0.2"
+APP_VERSION = "1.1.0"
 APP_ICON = Path("assets") / "anchor_plate.ico"
 BG = "#F4F7FA"
 PANEL = "#FFFFFF"
@@ -58,17 +60,18 @@ FACTOR_SOURCES = {
     "phi_tension_steel": "ACI 318-19 Table 17.5.3；φ 作用于 Nsa，设计强度为 φ·Nsa。",
     "psi_ec_n": "ACI 318-19 17.6.2.3；抗拉混凝土锥体破坏偏心修正。",
     "psi_c_n": "ACI 318-19 17.6.2.5；抗拉混凝土锥体破坏开裂修正。",
-    "psi_cp_n": "ACI 318-19 17.6.2.6；抗拉劈裂修正。",
+    "psi_cp_n": "ACI 318-19 17.6.2.6.2；现浇锚栓固定取 ψcp,N = 1.0。",
     "phi_tension_concrete": "ACI 318-19 Table 17.5.3；φ 作用于 Ncbg，设计强度为 φ·Ncbg。",
     "psi_c_p": "ACI 318-19 17.6.3.2；拔出强度开裂修正。",
-    "phi_pullout": "ACI 318-19 Table 17.5.3；φ 作用于 Npn，设计强度为 φ·Npn。",
+    "phi_pullout": "ACI 318-19 Table 17.5.3(c)；现浇锚栓拔出强度固定取 φ = 0.70。",
     "phi_shear_steel": "ACI 318-19 Table 17.5.3；φ 作用于 Vsa，设计强度为 φ·Vsa。",
     "psi_ec_v": "ACI 318-19 17.7.2.3；抗剪混凝土边缘破坏偏心修正。",
     "psi_c_v": "ACI 318-19 17.7.2.5；抗剪混凝土边缘破坏开裂修正。",
+    "k_stm": "ACI 318-19 R17.5.2.1 允许采用拉压杆模型设计抗剪锚固钢筋，但未规定统一的 kSTM；默认 1.20 为本程序针对近表面、平行于剪力方向配筋的工程建议值。",
     "psi_h_v": "ACI 318-19 17.7.2.6；构件厚度修正，程序按当前 ha 与 ca1 自动计算。",
     "phi_shear_concrete": "ACI 318-19 Table 17.5.3；φ 作用于 Vcbg，设计强度为 φ·Vcbg。",
     "kcp": "ACI 318-19 17.7.3.1；混凝土撬出系数，程序按 hef 自动计算。",
-    "phi_pryout": "ACI 318-19 Table 17.5.3；φ 作用于 Vcpg，设计强度为 φ·Vcpg。",
+    "phi_pryout": "ACI 318-19 Table 17.5.3(c)；现浇锚栓撬出强度固定取 φ = 0.70。",
 }
 
 
@@ -92,7 +95,7 @@ TOOLTIP_PURPOSES = {
     "ec_modulus": "混凝土弹性模量，输入值单位为 10^4 N/mm2；用于《钢结构节点设计手册》（第四版）表 8-3 中的弹性模量比 n = Es/Ec。",
     "es_modulus": "钢材弹性模量，输入值单位为 10^5 N/mm2；用于《钢结构节点设计手册》（第四版）表 8-3 中的弹性模量比 n = Es/Ec。",
     "fy_tension_rebar": "用于简化估算抗拉锚固配筋面积的设计强度；程序按 As,N = Nua,g / fy,N 计算，不再额外乘 φ。该值可按中国规范或项目要求确定。",
-    "fy_shear_rebar": "用于简化估算抗剪锚固配筋面积的设计强度；程序按 As,V = Vua,g / fy,V 计算，不再额外乘 φ。该值可按中国规范或项目要求确定。",
+    "fy_shear_rebar": "用于简化估算抗剪锚固配筋面积的设计强度；程序按 As,V = kSTM × Vua,g / fy,V 计算，不再额外乘 φ。该值可按中国规范或项目要求确定。",
     "tension_rebar_factor": "用于把程序计算的抗拉所需配筋面积换算为实配参与面积：As,N,prov = k_As,N × As,N,req。",
     "shear_rebar_factor": "用于把程序计算的抗剪所需配筋面积换算为实配参与面积：As,V,prov = k_As,V × As,V,req。",
     "n": "轴力设计值；只能输入正值，正值表示对底板向下的压力。",
@@ -109,6 +112,7 @@ TOOLTIP_PURPOSES = {
     "phi_shear_steel": "钢材抗剪强度折减系数。",
     "psi_ec_v": "抗剪混凝土边缘破坏偏心修正系数。",
     "psi_c_v": "抗剪混凝土边缘破坏开裂修正系数。",
+    "k_stm": "将锚栓组外部剪力转换为抗剪锚固钢筋设计拉力：Tu,STM = kSTM × Vua,g。ACI 318-19 未规定统一数值；默认 1.20 适用于锚固钢筋平行于剪力、靠近锚栓并靠近混凝土表面的常规构造。用户应根据实际传力模型确认，且 kSTM 不得小于 1.0。",
     "psi_h_v": "抗剪混凝土边缘破坏厚度修正系数。",
     "phi_shear_concrete": "混凝土抗剪边缘破坏强度折减系数。",
     "kcp": "混凝土撬出强度系数。",
@@ -262,6 +266,19 @@ class AnchorBoltApp(tk.Tk):
         style.configure("Accent.TButton", padding=(14, 8), background=ACCENT, foreground="#FFFFFF", bordercolor=ACCENT)
         style.map("Accent.TButton", background=[("active", "#173B5C")], foreground=[("disabled", "#E5E7EB")])
         style.configure("TEntry", padding=(8, 4), fieldbackground="#FFFFFF")
+        style.configure(
+            "Readonly.TEntry",
+            padding=(8, 4),
+            fieldbackground="#E5E7EB",
+            foreground="#64748B",
+        )
+        style.map(
+            "Readonly.TEntry",
+            fieldbackground=[("readonly", "#E5E7EB")],
+            foreground=[("readonly", "#64748B")],
+            selectbackground=[("readonly", "#CBD5E1")],
+            selectforeground=[("readonly", TEXT)],
+        )
         style.configure("TCombobox", padding=(8, 4), fieldbackground="#FFFFFF")
         style.configure("Treeview", rowheight=28, fieldbackground="#FFFFFF", background="#FFFFFF")
         style.configure("Treeview.Heading", font=("Microsoft YaHei UI", 9, "bold"), background="#E2E8F0", foreground=TEXT)
@@ -299,8 +316,8 @@ class AnchorBoltApp(tk.Tk):
         project_tab = ttk.Frame(input_tabs, style="Panel.TFrame", padding=10)
         input_tabs.add(project_tab, text="项目")
         ttk.Label(project_tab, text="项目信息", style="Section.TLabel").pack(anchor="w", pady=(0, 10))
-        self._entry_row(project_tab, "项目名称", self.project_var, "用于英文 Word calculation report 封面。")
-        self._entry_row(project_tab, "编制人", self.prepared_by_var, "用于英文 Word calculation report 封面。")
+        self._entry_row(project_tab, "项目名称", self.project_var, "用于英文 Word calculation report 封面。", entry_width=24)
+        self._entry_row(project_tab, "编制人", self.prepared_by_var, "用于英文 Word calculation report 封面。", entry_width=24)
 
         for group, label in (
             ("Geometry", "几何"),
@@ -322,9 +339,12 @@ class AnchorBoltApp(tk.Tk):
                         continue
                     var = tk.StringVar()
                     self.vars[spec.key] = var
-                    self._entry_row(content, self._format_input_label(spec), var, self._format_tooltip(spec))
+                    if spec.key == "k_stm":
+                        self._kstm_entry_row(content, self._format_input_label(spec), var, self._format_tooltip(spec))
+                    else:
+                        self._entry_row(content, self._format_input_label(spec), var, self._format_tooltip(spec))
                 ttk.Separator(content, orient="horizontal").pack(fill=X, pady=(12, 10))
-                ttk.Label(content, text="自动计算系数", style="Section.TLabel").pack(anchor="w", pady=(0, 6))
+                ttk.Label(content, text="程序自动确定系数", style="Section.TLabel").pack(anchor="w", pady=(0, 6))
                 for spec in INPUT_SPECS:
                     if spec.group != group or spec.key not in AUTO_FACTOR_KEYS:
                         continue
@@ -357,12 +377,19 @@ class AnchorBoltApp(tk.Tk):
         ttk.Button(button_bar, text="恢复样例", command=self.reset_defaults).pack(side=LEFT, fill=X, expand=True)
         ttk.Button(wrapper, text="导出英文计算书 (Word)", command=self.export_word).pack(fill=X, pady=(10, 0))
 
-    def _entry_row(self, parent: ttk.Frame, label: str, var: tk.StringVar, tip: str) -> None:
+    def _entry_row(
+        self,
+        parent: ttk.Frame,
+        label: str,
+        var: tk.StringVar,
+        tip: str,
+        entry_width: int = 11,
+    ) -> None:
         row = ttk.Frame(parent, style="Panel.TFrame")
         row.pack(fill=X, pady=3)
         lbl = ttk.Label(row, text=label, style="Panel.TLabel", width=31)
         lbl.pack(side=LEFT)
-        entry = ttk.Entry(row, textvariable=var, width=11)
+        entry = ttk.Entry(row, textvariable=var, width=entry_width)
         entry.pack(side=RIGHT)
         entry.bind("<FocusOut>", lambda _event: self._schedule_auto_update())
         entry.bind("<Return>", lambda _event: self.calculate(silent=True))
@@ -374,10 +401,133 @@ class AnchorBoltApp(tk.Tk):
         row.pack(fill=X, pady=3)
         lbl = ttk.Label(row, text=label, style="Panel.TLabel", width=31)
         lbl.pack(side=LEFT)
-        entry = ttk.Entry(row, textvariable=var, width=11, state="readonly")
+        entry = ttk.Entry(row, textvariable=var, width=11, state="readonly", style="Readonly.TEntry")
         entry.pack(side=RIGHT)
         ToolTip(lbl, tip)
         ToolTip(entry, tip)
+
+    def _kstm_entry_row(self, parent: ttk.Frame, label: str, var: tk.StringVar, tip: str) -> None:
+        row = ttk.Frame(parent, style="Panel.TFrame")
+        row.pack(fill=X, pady=3)
+        lbl = ttk.Label(row, text=label, style="Panel.TLabel", width=25)
+        lbl.pack(side=LEFT)
+        entry = ttk.Entry(row, textvariable=var, width=11)
+        entry.pack(side=RIGHT)
+        entry.bind("<FocusOut>", lambda _event: self._schedule_auto_update())
+        entry.bind("<Return>", lambda _event: self.calculate(silent=True))
+        help_button = ttk.Button(row, text="图示", width=5, command=self._show_kstm_model)
+        help_button.pack(side=RIGHT, padx=(0, 5))
+        ToolTip(lbl, tip)
+        ToolTip(entry, tip)
+        ToolTip(help_button, "查看 kSTM 拉压杆传力模型图示。")
+
+    def _show_kstm_model(self) -> None:
+        window = tk.Toplevel(self)
+        window.title("kSTM 抗剪锚固钢筋传力模型")
+        window.geometry("700x500")
+        window.resizable(False, False)
+        window.transient(self)
+        window.configure(bg=BG)
+
+        ttk.Label(
+            window,
+            text="抗剪锚固钢筋拉压杆模型 / Shear Anchor Reinforcement STM",
+            style="Status.TLabel",
+        ).pack(fill=X, padx=18, pady=(16, 8))
+
+        canvas = tk.Canvas(
+            window,
+            width=660,
+            height=340,
+            bg="#F8FAFC",
+            highlightthickness=1,
+            highlightbackground="#CBD5E1",
+        )
+        canvas.pack(padx=18, pady=(0, 10))
+
+        concrete = "#D1D5DB"
+        plate = "#94A3B8"
+        anchor = "#F97316"
+        breakout = "#F9A8D4"
+        tie = "#2563EB"
+        strut = "#22C55E"
+        force = "#111827"
+
+        canvas.create_rectangle(52, 92, 608, 310, fill=concrete, outline=force, width=2)
+        canvas.create_rectangle(300, 66, 520, 92, fill=plate, outline=force, width=2)
+        canvas.create_line(365, 32, 365, 205, fill=anchor, width=10)
+        canvas.create_polygon(52, 92, 365, 92, 52, 292, fill=breakout, outline="#EC4899", width=2, stipple="gray50")
+
+        canvas.create_line(90, 286, 90, 146, fill=tie, width=7)
+        canvas.create_arc(90, 126, 130, 166, start=90, extent=90, style=tk.ARC, outline=tie, width=7)
+        canvas.create_line(110, 126, 572, 126, fill=tie, width=7)
+        canvas.create_oval(101, 135, 115, 149, fill=strut, outline="#FFFFFF", width=2)
+        canvas.create_line(365, 126, 70, 275, fill=strut, width=7, dash=(10, 6))
+        canvas.create_rectangle(62, 267, 78, 283, fill=strut, outline="#FFFFFF", width=2)
+
+        canvas.create_line(500, 46, 390, 46, fill=force, width=3, arrow=tk.LAST, arrowshape=(14, 16, 6))
+        canvas.create_text(512, 46, text="Vua,g", anchor="w", fill=force, font=("Arial", 11, "bold"))
+
+        nodes = {
+            "A": (365, 78, "底板/锚栓荷载节点"),
+            "B": (365, 126, "锚栓与水平钢筋传力节点"),
+        }
+        node_label_positions = {
+            "A": (379, 67, "w"),
+            "B": (349, 146, "e"),
+        }
+        node_colors = {"A": force, "B": tie}
+        for name, (x, y, _description) in nodes.items():
+            canvas.create_oval(x - 8, y - 8, x + 8, y + 8, fill=node_colors[name], outline="#FFFFFF", width=2)
+            label_x, label_y, label_anchor = node_label_positions[name]
+            canvas.create_text(label_x, label_y, text=name, anchor=label_anchor, fill=force, font=("Arial", 11, "bold"))
+
+        canvas.create_text(426, 113, text="水平拉杆 Tu,STM", fill=tie, font=("Microsoft YaHei UI", 10))
+        canvas.create_text(186, 238, text="混凝土压杆", fill="#15803D", font=("Microsoft YaHei UI", 10), angle=27)
+        canvas.create_line(70, 275, 123, 291, fill="#15803D", width=1)
+        canvas.create_text(128, 292, text="混凝土承压节点", anchor="w", fill="#15803D", font=("Microsoft YaHei UI", 9))
+        canvas.create_text(74, 220, text="抗剪锚固钢筋弯折段", fill=tie, font=("Microsoft YaHei UI", 9), angle=90)
+        canvas.create_line(108, 142, 152, 88, fill=strut, width=1)
+        canvas.create_text(156, 86, text="边缘钢筋（绿色点筋）", anchor="w", fill="#15803D", font=("Microsoft YaHei UI", 9))
+        canvas.create_text(76, 103, text="约 35° 破坏面", anchor="nw", fill="#BE185D", font=("Microsoft YaHei UI", 9))
+
+        legend_x = 405
+        legend_y = 158
+        for index, (name, (_x, _y, description)) in enumerate(nodes.items()):
+            canvas.create_text(
+                legend_x,
+                legend_y + index * 24,
+                text=f"{name}：{description}",
+                anchor="w",
+                fill=TEXT,
+                font=("Microsoft YaHei UI", 9),
+            )
+
+        canvas.create_text(
+            330,
+            326,
+            text="几何锥尖位于锚栓上部传力区附近；它与拉压杆模型节点并非严格同一点。",
+            anchor="center",
+            fill=MUTED,
+            font=("Microsoft YaHei UI", 9),
+        )
+
+        note = ttk.Frame(window, style="Panel.TFrame", padding=(12, 8))
+        note.pack(fill=X, padx=18)
+        ttk.Label(
+            note,
+            text="Tu,STM = kSTM × Vua,g    |    默认 kSTM = 1.20",
+            style="Panel.TLabel",
+            font=("Microsoft YaHei UI", 10, "bold"),
+        ).pack(anchor="w")
+        ttk.Label(
+            note,
+            text="蓝色水平段与左侧弯折段表示同一组连续抗剪锚固钢筋，并在自由边处以圆弧包住绿色点状边缘钢筋。ACI 318-19 R17.5.2.1 未规定统一的 kSTM；默认值适用于水平锚固钢筋平行于剪力、靠近锚栓和混凝土表面的常规构造。",
+            style="Panel.TLabel",
+            wraplength=640,
+        ).pack(anchor="w", pady=(4, 0))
+
+        ttk.Button(window, text="关闭", command=window.destroy).pack(pady=(10, 14))
 
     def _yes_no_row(self, parent: ttk.Frame, spec, var: tk.StringVar) -> None:
         row = ttk.Frame(parent, style="Panel.TFrame")
@@ -565,7 +715,12 @@ class AnchorBoltApp(tk.Tk):
         if spec.key == "eh":
             lines.append("适用条件：ACI 318-19 17.6.3.2.2(b) 的 J- or L-bolt 拔出公式要求 3da ≤ eh ≤ 4.5da。")
         if spec.key in AUTO_FACTOR_KEYS:
-            lines.append("自动计算：程序按当前输入自动确定，计算后回填显示。")
+            fixed_factor_notes = {
+                "psi_cp_n": "自动取值：本程序按现浇 L 型锚栓固定取 ψcp,N = 1.0。",
+                "phi_pullout": "自动取值：本程序按现浇锚栓固定取 φ = 0.70。",
+                "phi_pryout": "自动取值：本程序按现浇锚栓固定取 φ = 0.70。",
+            }
+            lines.append(fixed_factor_notes.get(spec.key, "自动计算：程序按当前输入自动确定，计算后回填显示。"))
         if spec.group == "Factors" and spec.key not in AUTO_FACTOR_KEYS:
             lines.append(f"默认值：{_fmt(spec.default, spec.decimals)}")
             source = FACTOR_SOURCES.get(spec.key)
@@ -712,7 +867,10 @@ class AnchorBoltApp(tk.Tk):
                 detail += f"\n实配抗拉锚固钢筋: As,N,prov = {self.last_results.tension_rebar_area:.2f} x {factor:.2f} = {provided:.2f} mm2"
             elif check.name == "Concrete breakout strength in shear":
                 factor = self.last_results.inputs.shear_rebar_factor
+                k_stm = self.last_results.inputs.k_stm
+                design_force = self.last_results.values["shear_rebar_design_force"]
                 provided = self.last_results.values["shear_rebar_provided_area"]
+                detail += f"\n抗剪锚固钢筋设计拉力: Tu,STM = {k_stm:.3f} x Vua,g = {design_force:.3f} kN"
                 detail += f"\n实配抗剪锚固钢筋: As,V,prov = {self.last_results.shear_rebar_area:.2f} x {factor:.2f} = {provided:.2f} mm2"
         self.detail_var.set(detail)
         self._draw_detail_diagram(check.name)
@@ -801,10 +959,12 @@ class AnchorBoltApp(tk.Tk):
 
     def _sync_auto_inputs(self, results: AnchorResults) -> None:
         for key in AUTO_FACTOR_KEYS:
-            if key in self.vars and key in results.values:
-                spec = next((s for s in INPUT_SPECS if s.key == key), None)
-                decimals = spec.decimals if spec else 3
-                self.vars[key].set(_fmt(results.values[key], decimals))
+            if key not in self.vars:
+                continue
+            value = results.values.get(key, getattr(results.inputs, key))
+            spec = next((s for s in INPUT_SPECS if s.key == key), None)
+            decimals = spec.decimals if spec else 3
+            self.vars[key].set(_fmt(value, decimals))
         if "built_up_grout_pad" in self.vars:
             self.vars["built_up_grout_pad"].set("有 / Yes" if results.inputs.built_up_grout_pad >= 0.5 else "无 / No")
 
@@ -989,18 +1149,6 @@ class AnchorBoltApp(tk.Tk):
 
     def _draw_arrow_small(self, canvas: tk.Canvas, x1: float, y1: float, x2: float, y2: float, color: str, width: int = 3) -> None:
         canvas.create_line(x1, y1, x2, y2, fill=color, width=width, arrow=tk.LAST, arrowshape=(11, 13, 5))
-
-    def _draw_failure_thumbnail(self, canvas: tk.Canvas, x: float, y: float, mode: str, label: str) -> None:
-        canvas.create_rectangle(x - 70, y - 28, x + 70, y + 36, fill="#D1D5DB", outline="#111827")
-        canvas.create_rectangle(x - 34, y - 42, x + 34, y - 28, fill="#94A3B8", outline="#111827")
-        canvas.create_line(x, y - 54, x, y + 20, fill="#F97316", width=8)
-        if mode == "tension":
-            canvas.create_polygon(x - 58, y - 28, x, y + 34, x + 58, y - 28, fill="#9CA3AF", outline="#64748B")
-            self._draw_arrow_small(canvas, x, y - 52, x, y - 76, "#2563EB")
-        else:
-            canvas.create_polygon(x - 70, y - 28, x + 30, y + 36, x - 70, y + 36, fill="#9CA3AF", outline="#64748B")
-            self._draw_arrow_small(canvas, x + 8, y - 44, x + 52, y - 44, "#16A34A")
-        canvas.create_text(x, y + 56, text=label, fill="#111827", font=("Arial", 9))
 
     def _draw_anchor_section(self, canvas: tk.Canvas, x: float, y: float, bw: float, bh: float, mode: str) -> None:
         black = "#111827"
